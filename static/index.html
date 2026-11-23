@@ -737,7 +737,12 @@ async function watchJob(jid){
     }
     if(state.watchT){ clearInterval(state.watchT); state.watchT=null; }
     state.job=null; $("jobSpin").hidden=true; $("jobCancel").hidden=true;
-    if(j.status==="done"){ remind(label, true); await afterJob(j); return true; }
+    if(j.status==="done"){
+      remind(label, true);
+      try{ await afterJob(j); }
+      catch(e){ toast("任务完成，但结果加载失败: "+e.message); }
+      return true;
+    }
     if(j.status==="cancelled"){
       const extra=j.detail&&!j.detail.includes("已取消")?` ${j.detail}`:"";
       jobBarShow(`${label}已取消${extra}`,false,false);
