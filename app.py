@@ -1,108 +1,468 @@
-"""mm-gw-02 ASR Web — FunASR Paraformer 转写 + LLM 校验 (:8466, GPU2)
+"""ASR-Web 会议工作台 — FastAPI 入口。
 
-端点:
-  GET  /api/health      服务/模型/ffmpeg 状态
-  POST /api/transcribe  multipart: file, hotword? -> {text, segments, srt, duration_sec, elapsed_sec}
-  POST /api/verify      json: {text, mode, cleanup_filler} -> {corrected, changes, elapsed_sec}
-其余路径静态托管 static/（index.html）。
+鉴权: 除 /login 与 /api/ping 外全部需要 Token(cookie `asr_token` / Bearer / ?token=)。
+Token 来源: 环境变量 ASR_WEB_TOKEN, 未设置则自动生成并持久化到 data/.auth-token(0600)。
 """
 import asyncio
+import hmac
 import json
 import os
-import re
-import shutil
-import subprocess
-import tempfile
+import secrets
 import time
-import urllib.request
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-BASE = Path(__file__).resolve().parent
-MODEL_DIR = Path(os.getenv("ASR_MODEL_DIR", "/data/models/funasr"))
-LLM_BASE = os.getenv("LLM_BASE_URL", "http://127.0.0.1:8350/v1")
-LLM_KEY = os.environ["LLM_API_KEY"]
-LLM_MODEL = os.environ["LLM_MODEL"]
+import config
+import pipeline
+from store import Store
+from worker import Worker
 
-# ---------------------------------------------------------------- FunASR
+# ---------------------------------------------------------------- token
 
-_state: dict = {"model": None, "error": None, "load_sec": None, "ffmpeg": None}
+def _resolve_token() -> str:
+    if config.ASR_WEB_TOKEN:
+        return config.ASR_WEB_TOKEN
+    if config.TOKEN_FILE.exists():
+        t = config.TOKEN_FILE.read_text().strip()
+        if t:
+            return t
+    t = secrets.token_urlsafe(24)
+    config.ensure_dirs()
+    config.TOKEN_FILE.write_text(t)
+    os.chmod(config.TOKEN_FILE, 0o600)
+    return t
 
 
-def _load_model() -> None:
-    try:
-        from funasr import AutoModel
+config.ensure_dirs()
+AUTH_TOKEN = _resolve_token()
+COOKIE = "asr_token"
 
-        t0 = time.time()
-        _state["model"] = AutoModel(
-            model=str(MODEL_DIR / "paraformer-zh"),
-            vad_model=str(MODEL_DIR / "fsmn-vad"),
-            punc_model=str(MODEL_DIR / "ct-punc-zh"),
-            spk_model=str(MODEL_DIR / "cam++"),
-            disable_update=True,
-            disable_pbar=True,
-        )
-        _state["load_sec"] = round(time.time() - t0, 1)
-        _state["error"] = None
-    except Exception as e:  # noqa: BLE001 启动期失败要能被 health 看到
-        _state["model"] = None
-        _state["error"] = f"{type(e).__name__}: {e}"
+store = Store(config.DB_PATH)
+worker = Worker(store)
+
+LOGIN_HTML = """<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>登录 · 语音转写工作台</title><style>
+body{margin:0;background:#0e1013;color:#e8eaf0;font:14px/1.6 -apple-system,"PingFang SC","Noto Sans SC",sans-serif;
+display:flex;align-items:center;justify-content:center;min-height:100vh}
+.c{background:#15181d;border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:28px;width:320px}
+h1{font-size:16px;margin:0 0 16px;font-weight:600}
+input{width:100%;box-sizing:border-box;background:#1a1e25;border:1px solid rgba(255,255,255,.12);
+color:#e8eaf0;border-radius:9px;padding:10px 12px;font-size:14px;outline:none;margin-bottom:12px}
+button{width:100%;background:linear-gradient(135deg,#6a8dff,#9b6aff);border:none;color:#fff;
+border-radius:9px;padding:10px;font-size:14px;font-weight:600;cursor:pointer}
+.err{color:#ef6a6a;font-size:12px;margin-top:10px;display:none}
+</style></head><body><div class="c"><h1>语音转写工作台</h1>
+<form method="post" action="/login">
+<input type="password" name="token" placeholder="访问令牌" autofocus>
+<button type="submit">进入</button></form>
+<div class="err" id="e">令牌错误</div></div></body></html>"""
 
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
-    import imageio_ffmpeg
-
-    _state["ffmpeg"] = imageio_ffmpeg.get_ffmpeg_exe()
     loop = asyncio.get_running_loop()
-    loop.run_in_executor(None, _load_model)  # 后台加载, health 可查进度
+    loop.run_in_executor(None, pipeline.load_asr_model)  # 后台加载
+    worker.start()
+    info = await worker.recover()
+    if info.get("interrupted"):
+        print(f"[asr-web] startup recovery: interrupted tasks -> {info['interrupted']}")
     yield
 
 
-app = FastAPI(title="mm-gw-02 asr-web", lifespan=_lifespan)
+app = FastAPI(title="asr-web meeting workbench", lifespan=_lifespan)
 
-# ---------------------------------------------------------------- 音频解码
+# ---------------------------------------------------------------- 鉴权中间件
 
-_SUFFIX_BY_TYPE = {
-    "audio/webm": ".webm", "audio/ogg": ".ogg", "audio/mpeg": ".mp3",
-    "audio/mp4": ".m4a", "audio/x-m4a": ".m4a", "audio/wav": ".wav",
-    "audio/x-wav": ".wav", "audio/flac": ".flac", "video/webm": ".webm",
-}
-
-
-def _decode_to_wav(data: bytes, content_type: str) -> tuple[str, float, Path]:
-    """任意输入 -> 16k mono wav; 返回 (路径, 时长秒)。调用方负责清理目录。"""
-    suffix = _SUFFIX_BY_TYPE.get((content_type or "").split(";")[0].strip(), ".bin")
-    workdir = Path(tempfile.mkdtemp(prefix="asrweb-"))
-    raw, out = workdir / f"in{suffix}", workdir / "out.wav"
-    raw.write_bytes(data)
-    p = subprocess.run(
-        [_state["ffmpeg"], "-y", "-hide_banner", "-loglevel", "error",
-         "-i", str(raw), "-ac", "1", "-ar", "16000", str(out)],
-        capture_output=True, timeout=900,
-    )
-    if p.returncode != 0 or not out.exists():
-        shutil.rmtree(workdir, ignore_errors=True)
-        raise HTTPException(400, "音频解码失败: " + p.stderr.decode(errors="replace")[:300])
-    duration = max(0.0, (out.stat().st_size - 44) / 2 / 16000)
-    return str(out), duration, workdir
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    path = request.url.path
+    if path == "/api/ping" or path == "/login":
+        return await call_next(request)
+    token = request.cookies.get(COOKIE) or ""
+    auth = request.headers.get("authorization") or ""
+    if auth.lower().startswith("bearer "):
+        token = auth[7:].strip()
+    if not token:
+        token = request.query_params.get("token", "")
+    if not hmac.compare_digest(token, AUTH_TOKEN):
+        if path.startswith("/api/"):
+            return JSONResponse({"detail": "未授权"}, status_code=401)
+        return RedirectResponse("/login", status_code=302)
+    return await call_next(request)
 
 
-# ---------------------------------------------------------------- 转写
+@app.get("/login")
+async def login_page():
+    return HTMLResponse(LOGIN_HTML)
 
-def _run_asr(wav_path: str, hotword: str) -> dict:
-    res = _state["model"].generate(
-        input=wav_path, batch_size_s=300, hotword=hotword or "",
-    )
-    r = res[0]
-    segments = [
-        {"start": s["start"], "end": s["end"], "spk": s.get("spk"), "text": s["text"]}
-        for s in (r.get("sentence_info") or [])
-    ]
-    return {"text": (r.get("text") or "").strip(), "segments": segments}
+
+@app.post("/login")
+async def login(request: Request):
+    form = await request.form()
+    token = str(form.get("token") or "")
+    if not hmac.compare_digest(token, AUTH_TOKEN):
+        await asyncio.sleep(1.0)  # 简单防爆破
+        return HTMLResponse(LOGIN_HTML.replace(
+            'class="err" id="e"', 'class="err" id="e" style="display:block"'))
+    resp = RedirectResponse("/", status_code=303)
+    resp.set_cookie(COOKIE, AUTH_TOKEN, max_age=30 * 24 * 3600,
+                    httponly=True, samesite="lax")
+    return resp
+
+
+# ---------------------------------------------------------------- 健康/探活
+
+@app.get("/api/ping")
+async def ping():
+    return {"ok": True}
+
+
+@app.get("/api/health")
+async def health():
+    return {"model_loaded": pipeline.asr_ready(), "model_error": pipeline.asr_error(),
+            "auth": True, "llm_model": config.LLM_MODEL,
+            "limits": {"max_upload_mb": config.MAX_UPLOAD_MB,
+                       "max_duration_min": config.MAX_DURATION_MIN,
+                       "asr_concurrency": config.ASR_CONCURRENCY}}
+
+
+# ---------------------------------------------------------------- 任务: 创建/列表/详情/操作
+
+@app.post("/api/tasks")
+async def create_task(request: Request, file: UploadFile = File(...), hotword: str = Form("")):
+    filename = os.path.basename(file.filename or "recording.bin") or "recording.bin"
+    max_bytes = config.MAX_UPLOAD_MB * 1024 * 1024
+    declared = request.headers.get("content-length")
+    if declared and int(declared) > max_bytes + 64 * 1024:
+        raise HTTPException(413, f"文件超过 {config.MAX_UPLOAD_MB}MB 上限")
+    # 重复提交去重: 同名同大小已有排队/处理中任务则直接复用
+    if declared:
+        existing = await asyncio.to_thread(store.find_active_by_file, filename, int(declared))
+        if existing:
+            return {"task_id": existing, "deduplicated": True}
+    tid = store.create_task(filename, int(declared or 0), (hotword or "").strip())
+    upload_path = Path(config.UPLOAD_DIR) / f"{tid}.bin"
+    size = 0
+    try:
+        with open(upload_path, "wb") as f:
+            while chunk := await file.read(1024 * 1024):
+                size += len(chunk)
+                if size > max_bytes:
+                    raise HTTPException(413, f"文件超过 {config.MAX_UPLOAD_MB}MB 上限")
+                f.write(chunk)
+    except Exception:
+        upload_path.unlink(missing_ok=True)
+        store.update_task(tid, status="failed", error="上传中断或超限", stage="done")
+        raise
+    if size == 0:
+        upload_path.unlink(missing_ok=True)
+        store.delete_task_files(tid)
+        raise HTTPException(400, "空文件")
+    store.update_task(tid, size_bytes=size)
+    # 流式后去重(声明的 Content-Length 含 multipart 开销, 必须按实际字节数再查一次)
+    existing = await asyncio.to_thread(store.find_active_by_file, filename, size)
+    if existing and existing != tid:
+        upload_path.unlink(missing_ok=True)
+        store.delete_task_files(tid)
+        return {"task_id": existing, "deduplicated": True}
+    await worker.enqueue(tid)
+    return {"task_id": tid, "size_bytes": size}
+
+
+@app.get("/api/tasks")
+async def list_tasks():
+    return store.list_tasks()
+
+
+@app.get("/api/tasks/{tid}")
+async def get_task(tid: str):
+    t = store.get_task(tid)
+    if not t or t["deleted"]:
+        raise HTTPException(404, "任务不存在")
+    return t
+
+
+@app.post("/api/tasks/{tid}/cancel")
+async def cancel_task(tid: str):
+    t = store.get_task(tid)
+    if not t or t["deleted"]:
+        raise HTTPException(404, "任务不存在")
+    if t["status"] == "queued":
+        store.update_task(tid, status="cancelled", stage="done")
+        return {"status": "cancelled"}
+    if t["status"] == "processing":
+        store.update_task(tid, cancel_requested=1)
+        return {"status": "cancelling", "note": "解码阶段结束后生效; ASR 处理中不可中断"}
+    raise HTTPException(409, f"状态 {t['status']} 不可取消")
+
+
+@app.post("/api/tasks/{tid}/retry")
+async def retry_task(tid: str):
+    t = store.get_task(tid)
+    if not t or t["deleted"]:
+        raise HTTPException(404, "任务不存在")
+    if t["status"] not in ("failed", "cancelled"):
+        raise HTTPException(409, f"状态 {t['status']} 不可重试")
+    has_wav = t["audio_path"] and t["audio_path"].endswith(".wav") \
+        and Path(t["audio_path"]).exists()
+    has_src = (Path(config.UPLOAD_DIR) / f"{tid}.bin").exists()
+    if not has_wav and not has_src:
+        raise HTTPException(400, "音频文件已清理, 请重新上传")
+    store.update_task(tid, status="queued", stage="uploaded", error=None, cancel_requested=0)
+    await worker.enqueue(tid)
+    return {"status": "queued"}
+
+
+@app.post("/api/tasks/{tid}/delete")
+async def delete_task(tid: str):
+    t = store.get_task(tid)
+    if not t:
+        raise HTTPException(404, "任务不存在")
+    if t["status"] == "processing":
+        raise HTTPException(409, "处理中的任务不可删除, 请先等待完成或取消")
+    info = await asyncio.to_thread(store.delete_task_files, tid)
+    removed = []
+    for p in (info.get("audio_path"), str(Path(config.UPLOAD_DIR) / f"{tid}.bin")):
+        if p and Path(p).exists():
+            Path(p).unlink(missing_ok=True)
+            removed.append(p)
+    return {"deleted": True, "removed_files": removed}
+
+
+# ---------------------------------------------------------------- 片段/说话人/编辑
+
+@app.get("/api/tasks/{tid}/segments")
+async def get_segments(tid: str):
+    t = store.get_task(tid)
+    if not t or t["deleted"]:
+        raise HTTPException(404, "任务不存在")
+    return {"task": t, "segments": store.get_segments(tid),
+            "speakers": store.get_speakers(tid), "edits": store.get_edits(tid)}
+
+
+@app.patch("/api/segments/{seg_id}")
+async def patch_segment(seg_id: int, payload: dict):
+    tid = payload.get("task_id") or ""
+    t = store.get_task(tid)
+    if not t:
+        raise HTTPException(404, "任务不存在")
+    segs = store.get_segments(tid)
+    seg = next((s for s in segs if s["id"] == seg_id), None)
+    if not seg:
+        raise HTTPException(404, "片段不存在")
+    changed = {}
+    if "text" in payload:
+        new = str(payload["text"] or "")
+        old = seg["corrected_text"] if seg["corrected_text"] is not None else seg["raw_text"]
+        store.update_segment(seg_id, tid, "text", old, new, "human")
+        changed["text"] = new
+    if "speaker_id" in payload:
+        sid = payload["speaker_id"]
+        if sid is not None and (not isinstance(sid, int) or sid < 0 or sid > 63):
+            raise HTTPException(400, "speaker_id 非法")
+        old = seg["speaker_id"]
+        store.update_segment(seg_id, tid, "speaker_id", str(old), str(sid), "human")
+        if sid is not None:
+            names = {s["speaker_id"] for s in store.get_speakers(tid)}
+            if sid not in names:
+                store.upsert_speaker(tid, sid, f"说话人{sid + 1}")
+        changed["speaker_id"] = sid
+    if not changed:
+        raise HTTPException(400, "无可更新字段")
+    return {"updated": changed}
+
+
+@app.post("/api/tasks/{tid}/speakers/{sid}/rename")
+async def rename_speaker(tid: str, sid: int, payload: dict):
+    name = (payload.get("display_name") or "").strip()
+    if not name:
+        raise HTTPException(400, "display_name 为空")
+    store.upsert_speaker(tid, sid, name)
+    return {"speaker_id": sid, "display_name": name}
+
+
+@app.post("/api/tasks/{tid}/speakers/merge")
+async def merge_speakers(tid: str, payload: dict):
+    from_ids = payload.get("from") or []
+    to_id = payload.get("to")
+    if not from_ids or to_id is None or to_id in from_ids:
+        raise HTTPException(400, "参数非法: 需 from 数组与目标 to")
+    n = store.merge_speakers(tid, from_ids, to_id)
+    return {"moved_segments": n}
+
+
+@app.post("/api/tasks/{tid}/speakers/split")
+async def split_speaker(tid: str, payload: dict):
+    seg_ids = payload.get("segment_ids") or []
+    if not seg_ids:
+        raise HTTPException(400, "segment_ids 为空")
+    segs = store.get_segments(tid)
+    max_sid = max([s["speaker_id"] for s in segs if s["speaker_id"] is not None] or [-1])
+    new_sid = max_sid + 1
+    n = store.reassign_speakers(tid, seg_ids, None, new_speaker_id=new_sid)
+    return {"new_speaker_id": new_sid, "moved_segments": n}
+
+
+@app.post("/api/tasks/{tid}/segments/reassign")
+async def reassign_segments(tid: str, payload: dict):
+    seg_ids = payload.get("segment_ids") or []
+    to_speaker = payload.get("to_speaker")
+    if not seg_ids or to_speaker is None:
+        raise HTTPException(400, "参数非法")
+    n = store.reassign_speakers(tid, seg_ids, to_speaker)
+    return {"moved_segments": n}
+
+
+# ---------------------------------------------------------------- 音频回放(含 Range)
+
+@app.get("/api/tasks/{tid}/audio")
+async def task_audio(tid: str, request: Request):
+    t = store.get_task(tid)
+    if not t or not t["audio_path"]:
+        raise HTTPException(404, "音频不存在")
+    path = Path(t["audio_path"])
+    if not path.exists():
+        raise HTTPException(404, "音频文件已清理")
+    size = path.stat().st_size
+    rng = request.headers.get("range")
+    if rng and rng.startswith("bytes="):
+        try:
+            start_s, end_s = rng[6:].split("-", 1)
+            start = int(start_s or 0)
+            end = int(end_s) if end_s else min(start + 1024 * 1024, size - 1)
+        except ValueError:
+            raise HTTPException(416, "Range 非法")
+        end = min(end, size - 1)
+        if start > end or start >= size:
+            raise HTTPException(416, "Range 越界")
+        with open(path, "rb") as f:
+            f.seek(start)
+            data = f.read(end - start + 1)
+        return Response(data, status_code=206, media_type="audio/wav",
+                        headers={"Content-Range": f"bytes {start}-{end}/{size}",
+                                 "Accept-Ranges": "bytes"})
+    return Response(path.read_bytes(), media_type="audio/wav",
+                    headers={"Accept-Ranges": "bytes"})
+
+
+# ---------------------------------------------------------------- LLM 分阶段
+
+@app.post("/api/tasks/{tid}/proofread")
+async def proofread(tid: str):
+    t = store.get_task(tid)
+    if not t or t["deleted"]:
+        raise HTTPException(404, "任务不存在")
+    if t["status"] != "done":
+        raise HTTPException(409, "转写未完成")
+    segs = store.get_segments(tid)
+    if not segs:
+        raise HTTPException(409, "无转写片段")
+    async with worker.llm_sem:
+        try:
+            corrected, stats = await asyncio.to_thread(
+                pipeline.proofread_segments, segs, t["hotword"] or "")
+        except pipeline.LLMError as e:
+            raise HTTPException(502, str(e))
+    for s in segs:
+        if s["idx"] in corrected:
+            store.update_segment(s["id"], tid, "text", s["raw_text"],
+                                 corrected[s["idx"]], "llm")
+    return {"stats": stats, "corrected_count": len(corrected)}
+
+
+@app.post("/api/tasks/{tid}/understand")
+async def understand(tid: str):
+    t = store.get_task(tid)
+    if not t or t["deleted"]:
+        raise HTTPException(404, "任务不存在")
+    segs = store.get_segments(tid)
+    if not segs:
+        raise HTTPException(409, "无转写片段")
+    speakers = {s["speaker_id"]: s["display_name"] for s in store.get_speakers(tid)}
+    async with worker.llm_sem:
+        try:
+            data = await asyncio.to_thread(pipeline.understand_meeting, segs, speakers)
+        except pipeline.LLMError as e:
+            raise HTTPException(502, str(e))
+    doc_id = store.put_document(tid, "understanding", json.dumps(data, ensure_ascii=False))
+    return {"document_id": doc_id, "understanding": data}
+
+
+@app.post("/api/tasks/{tid}/documents")
+async def gen_document(tid: str, payload: dict):
+    t = store.get_task(tid)
+    if not t or t["deleted"]:
+        raise HTTPException(404, "任务不存在")
+    kind = payload.get("kind") or ""
+    if kind not in pipeline._DOC_KINDS:
+        raise HTTPException(400, f"kind 必须是 {list(pipeline._DOC_KINDS)}")
+    docs = store.get_documents(tid, "understanding")
+    if not docs:
+        raise HTTPException(409, "请先生成会议理解(understand)")
+    understanding = json.loads(docs[0]["content"])
+    segs = store.get_segments(tid)
+    speakers = {s["speaker_id"]: s["display_name"] for s in store.get_speakers(tid)}
+    lines = []
+    for s in segs:
+        text = (s.get("corrected_text") or s.get("raw_text") or "").strip()
+        if text:
+            sid = s.get("speaker_id")
+            spk = speakers.get(sid, f"说话人{sid + 1}" if sid is not None else "未知说话人")
+            st = s.get("start_ms") or 0
+            ts = f"{st // 60000:02d}:{st // 1000 % 60:02d}"
+            lines.append(f"[{ts}] {spk}：{text}")
+    async with worker.llm_sem:
+        try:
+            doc = await asyncio.to_thread(pipeline.generate_document, kind, understanding,
+                                          "\n".join(lines), payload.get("options") or {})
+        except pipeline.LLMError as e:
+            raise HTTPException(502, str(e))
+    doc_id = store.put_document(tid, kind, doc, payload.get("options") or {})
+    return {"document_id": doc_id, "kind": kind, "content": doc}
+
+
+@app.get("/api/tasks/{tid}/documents")
+async def list_documents(tid: str, kind: str | None = None):
+    return store.get_documents(tid, kind)
+
+
+# ---------------------------------------------------------------- legacy 兼容
+
+@app.post("/api/transcribe")
+async def legacy_transcribe(file: UploadFile = File(...), hotword: str = Form("")):
+    """兼容旧接口: 同步转写, 不建任务不留档。新前端请用 /api/tasks。"""
+    if not pipeline.asr_ready():
+        raise HTTPException(503, pipeline.asr_error() or "模型加载中")
+    max_bytes = config.MAX_UPLOAD_MB * 1024 * 1024
+    token = secrets.token_hex(6)
+    tmp_in = Path(config.TMP_DIR) / f"legacy-{token}.bin"
+    wav = Path(config.TMP_DIR) / f"legacy-{token}.wav"
+    size = 0
+    try:
+        with open(tmp_in, "wb") as f:
+            while chunk := await file.read(1024 * 1024):
+                size += len(chunk)
+                if size > max_bytes:
+                    raise HTTPException(413, f"文件超过 {config.MAX_UPLOAD_MB}MB 上限")
+                f.write(chunk)
+        t0 = time.time()
+        async with worker.decode_sem:
+            duration = await asyncio.to_thread(pipeline.decode_audio, str(tmp_in), str(wav))
+        async with worker.asr_sem:
+            segs = await asyncio.to_thread(pipeline.transcribe_wav, str(wav), (hotword or "").strip())
+        elapsed = round(time.time() - t0, 1)
+        return {"text": "".join(s["raw_text"] for s in segs),
+                "segments": [{"start": s["start_ms"], "end": s["end_ms"],
+                              "spk": s["speaker_id"], "text": s["raw_text"]} for s in segs],
+                "srt": _build_srt(segs), "duration_sec": duration, "elapsed_sec": elapsed}
+    finally:
+        tmp_in.unlink(missing_ok=True)
+        wav.unlink(missing_ok=True)
 
 
 def _fmt_ts(ms: int) -> str:
@@ -113,130 +473,36 @@ def _fmt_ts(ms: int) -> str:
     return f"{h:02d}:{m:02d}:{s:02d},{msec:03d}"
 
 
-def build_srt(segments: list[dict]) -> str:
-    """同说话人连续句合并为字幕条, 超 8s 或 60 字再切。"""
-    cues: list[list] = []  # [start, end, spk, text]
+def _build_srt(segments: list[dict]) -> str:
+    cues = []
     for s in segments:
-        if cues and cues[-1][2] == s["spk"] and (s["end"] - cues[-1][0]) <= 8000 \
-                and len(cues[-1][3]) + len(s["text"]) <= 60:
-            cues[-1][1] = s["end"]
-            cues[-1][3] += s["text"]
+        if s["start_ms"] is None:
+            continue
+        if cues and cues[-1][2] == s["speaker_id"] and (s["end_ms"] - cues[-1][0]) <= 8000 \
+                and len(cues[-1][3]) + len(s["raw_text"]) <= 60:
+            cues[-1][1] = s["end_ms"]
+            cues[-1][3] += s["raw_text"]
         else:
-            cues.append([s["start"], s["end"], s["spk"], s["text"]])
-    out = []
-    for i, (a, b, _spk, txt) in enumerate(cues, 1):
-        out.append(f"{i}\n{_fmt_ts(a)} --> {_fmt_ts(b)}\n{txt}\n")
-    return "\n".join(out)
-
-
-@app.post("/api/transcribe")
-async def transcribe(
-    file: UploadFile = File(...),
-    hotword: str = Form(""),
-):
-    if _state["model"] is None:
-        raise HTTPException(503, _state["error"] or "模型加载中，请稍候（约 1 分钟）")
-    data = await file.read()
-    if len(data) > 512 * 1024 * 1024:
-        raise HTTPException(413, "文件超过 512MB 上限")
-    wav, duration, workdir = _decode_to_wav(data, file.content_type or "")
-    try:
-        t0 = time.time()
-        result = await asyncio.to_thread(_run_asr, wav, hotword)
-        elapsed = round(time.time() - t0, 1)
-        result.update(duration_sec=round(duration, 1), elapsed_sec=elapsed,
-                      srt=build_srt(result["segments"]))
-        return result
-    finally:
-        shutil.rmtree(workdir, ignore_errors=True)
-
-
-# ---------------------------------------------------------------- LLM 校验
-
-SYS_FAITHFUL = (
-    "你是严谨的中文语音转写校对员。只修正语音识别(ASR)造成的错误，绝不改写原意：\n"
-    "1. 同音字/错别字、专名写法；2. 明显的 ASR 幻觉（无中生有的套话如\"谢谢观看\"、机械重复段）；\n"
-    "3. 标点与断句。不得增删内容，保留口语用词、方言和原语气。\n"
-    "输出严格 JSON：{\"corrected\": \"全文修正稿\", \"changes\": [{\"from\": \"原片段\", \"to\": \"改后\", \"reason\": \"简短原因\"}]}。"
-    "changes 只列真实修改处，最多 50 条。"
-)
-SYS_CLEAN = (
-    "你是中文语音转写整理员。在修正 ASR 错误（同音字/错别字/幻觉/标点）的基础上，"
-    "去除语气词（嗯、啊、呃、然后、那个等无实义词），清理口语重复与车轱辘话，整理为通顺、可读的书面语，"
-    "但不得改变任何事实内容与说话人立场。\n"
-    "输出严格 JSON：{\"corrected\": \"整理后全文\", \"changes\": [{\"from\": \"原片段\", \"to\": \"改后\", \"reason\": \"简短原因\"}]}。"
-    "changes 只列代表性修改，最多 50 条。"
-)
-FILLER_NOTE = "额外要求：更彻底地清除语气词与填充词。"
-
-
-def _strip_fences(s: str) -> str:
-    return re.sub(r"^```(json)?\s*|\s*```$", "", s.strip(), flags=re.I)
-
-
-def _extract_json(s: str) -> dict:
-    s = _strip_fences(s)
-    a, b = s.find("{"), s.rfind("}")
-    if a < 0 or b <= a:
-        raise ValueError("no json object")
-    return json.loads(s[a:b + 1])
+            cues.append([s["start_ms"], s["end_ms"], s["speaker_id"], s["raw_text"]])
+    return "\n".join(f"{i}\n{_fmt_ts(a)} --> {_fmt_ts(b)}\n{txt}\n"
+                     for i, (a, b, _spk, txt) in enumerate(cues, 1))
 
 
 @app.post("/api/verify")
-async def verify(payload: dict):
+async def legacy_verify(payload: dict):
     text = (payload.get("text") or "").strip()
     if not text:
         raise HTTPException(400, "text 为空")
-    mode = payload.get("mode", "faithful")
-    sys_prompt = SYS_CLEAN if mode == "clean" else SYS_FAITHFUL
-    if payload.get("cleanup_filler") and mode == "faithful":
-        sys_prompt += "\n" + FILLER_NOTE
-    body = json.dumps({
-        "model": LLM_MODEL,
-        "messages": [
-            {"role": "system", "content": sys_prompt},
-            {"role": "user", "content": "以下是语音转写原文，请按要求处理：\n\n" + text},
-        ],
-        "temperature": 0.1,
-        "max_tokens": max(4096, min(24000, len(text) * 2)),
-        "stream": False,
-        # huihui 是 thinking 模型, 不关会烧光 max_tokens 且 content 为空
-        "chat_template_kwargs": {"enable_thinking": False},
-    }).encode()
-    req = urllib.request.Request(
-        f"{LLM_BASE}/chat/completions", data=body, method="POST",
-        headers={"Authorization": f"Bearer {LLM_KEY}",
-                 "Content-Type": "application/json"},
-    )
-    t0 = time.time()
-    try:
-        with urllib.request.urlopen(req, timeout=1200) as resp:
-            data = json.loads(resp.read())
-    except Exception as e:  # noqa: BLE001
-        raise HTTPException(502, f"LLM 调用失败: {type(e).__name__}: {e}")
-    content = data["choices"][0]["message"]["content"]
-    if not (content or "").strip():
-        raise HTTPException(502, "LLM 返回空 content（thinking 未关闭或输出被截断），请检查 8350 模型")
-    try:
-        out = _extract_json(content)
-        corrected, changes = str(out.get("corrected", "")).strip(), out.get("changes", [])[:80]
-    except Exception:  # noqa: BLE001 模型没吐 JSON 就退回原文透传
-        corrected, changes = _strip_fences(content), []
-    return {"corrected": corrected, "changes": changes,
-            "elapsed_sec": round(time.time() - t0, 1)}
+    async with worker.llm_sem:
+        try:
+            return await asyncio.to_thread(pipeline.verify_text, text,
+                                           payload.get("mode", "faithful"),
+                                           bool(payload.get("cleanup_filler")))
+        except pipeline.LLMError as e:
+            raise HTTPException(502, str(e))
 
 
 # ---------------------------------------------------------------- 静态页
 
-@app.get("/api/health")
-async def health():
-    return {
-        "model_loaded": _state["model"] is not None,
-        "model_error": _state["error"],
-        "load_sec": _state["load_sec"],
-        "ffmpeg_ok": bool(_state["ffmpeg"]),
-        "llm_model": LLM_MODEL,
-    }
-
-
-app.mount("/", StaticFiles(directory=BASE / "static", html=True), name="static")
+app.mount("/", StaticFiles(directory=Path(__file__).parent / "static", html=True),
+          name="static")
