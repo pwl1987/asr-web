@@ -211,6 +211,23 @@ _SYS_PROOFREAD = (
 )
 
 
+def apply_glossary(text: str, glossary: dict[str, str] | None) -> str:
+    """术语表确定性纠正(优先于 LLM 校对): 长词优先, 避免互相覆盖。"""
+    if not text or not glossary:
+        return text
+    for wrong in sorted(glossary, key=len, reverse=True):
+        right = glossary[wrong]
+        if wrong and wrong != right and wrong in text:
+            text = text.replace(wrong, right)
+    return text
+
+
+def clean_citations(text: str, valid_ids: set[int]) -> str:
+    """清掉文档里引用了不存在片段的 [#id], 保留合法引用。"""
+    return re.sub(r"\[#(\d+)\]",
+                  lambda m: m.group(0) if int(m.group(1)) in valid_ids else "", text)
+
+
 def _make_batches(segments: list[dict], max_chars: int) -> list[list[dict]]:
     batches: list[list[dict]] = []
     cur: list[dict] = []
@@ -226,7 +243,8 @@ def _make_batches(segments: list[dict], max_chars: int) -> list[list[dict]]:
     return batches
 
 
-def _proofread_batch(batch: list[dict], prev_line: str, hotword: str) -> tuple[dict, list[int]]:
+def _proofread_batch(batch: list[dict], prev_line: str, hotword: str,
+                     glossary: dict[str, str] | None = None) -> tuple[dict, list[int]]:
     """单批校对: 缺段重试; 网络/JSON 异常重试; 返回 ({idx:text}, 仍未覆盖 ids)。"""
     ids = [s["idx"] for s in batch]
     ctx = f"（上文仅供理解：{prev_line}）\n" if prev_line else ""
@@ -248,7 +266,7 @@ def _proofread_batch(batch: list[dict], prev_line: str, hotword: str) -> tuple[d
                 raise LLMError("校对输出缺少 items 数组")
             for it in items:
                 if isinstance(it, dict) and it.get("id") in ids and isinstance(it.get("text"), str):
-                    got[it["id"]] = it["text"].strip()
+                    got[it["id"]] = apply_glossary(it["text"].strip(), glossary)
         except LLMError as e:
             last_err = e
             if not got:
@@ -265,7 +283,8 @@ def _proofread_batch(batch: list[dict], prev_line: str, hotword: str) -> tuple[d
 
 def proofread_segments(segments: list[dict], hotword: str = "", *,
                        progress=None, cancel=None, only_missing: bool = False,
-                       force_human: bool = False, on_result=None) -> tuple[dict, dict]:
+                       force_human: bool = False, on_result=None,
+                       glossary: dict[str, str] | None = None) -> tuple[dict, dict]:
     """分批忠实校对(批间并行)。返回 ({idx: corrected_text}, stats)。
 
     - 默认跳过 corrected_by='human' 的片段, 绝不覆盖人工修改(force_human=True 才覆盖)
@@ -302,7 +321,7 @@ def proofread_segments(segments: list[dict], hotword: str = "", *,
     future_map = {}
     for bi, batch in enumerate(batches):
         prev_line = _seg_line(batches[bi - 1][-1]) if bi > 0 else ""
-        future_map[ex.submit(_proofread_batch, batch, prev_line, hotword)] = batch
+        future_map[ex.submit(_proofread_batch, batch, prev_line, hotword, glossary)] = batch
     try:
         for fut in as_completed(future_map):
             done += 1
@@ -564,6 +583,9 @@ def generate_document(kind: str, understanding: dict, transcript_text: str,
         opts.append("不要附待确认问题清单")
     else:
         opts.append("文末附「待确认问题」清单(来自 unconfirmed)")
+    if options.get("cite_segments", True):
+        opts.append("在关键结论/决定/待办/数字后用 [#片段id] 标注依据"
+                    "(id 必须来自转写稿行首的 [id=N], 不要编造)")
     opt_text = "；".join(opts)
 
     sys_p = (f"你是公文写作专家。基于会议理解结构与转写稿撰写{requirement}。"

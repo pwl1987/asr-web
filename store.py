@@ -63,10 +63,25 @@ CREATE TABLE IF NOT EXISTS ai_jobs(
   cancel_requested INTEGER DEFAULT 0,
   created_at REAL, updated_at REAL
 );
+CREATE TABLE IF NOT EXISTS terms(
+  wrong TEXT PRIMARY KEY,
+  right TEXT NOT NULL,
+  created_at REAL
+);
+CREATE TABLE IF NOT EXISTS replace_ops(
+  id TEXT PRIMARY KEY,
+  task_id TEXT,
+  from_text TEXT,
+  to_text TEXT,
+  mapping TEXT,               -- JSON [{id, old_text, old_by, new_text}]
+  created_at REAL,
+  undone INTEGER DEFAULT 0
+);
 CREATE INDEX IF NOT EXISTS idx_segments_task ON segments(task_id, idx);
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_jobs_task ON ai_jobs(task_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON ai_jobs(status);
+CREATE INDEX IF NOT EXISTS idx_replace_ops_task ON replace_ops(task_id, created_at);
 """
 
 
@@ -87,7 +102,14 @@ class Store:
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA busy_timeout=5000")
         self._conn.executescript(_SCHEMA)
+        self._migrate()
         self._conn.commit()
+
+    def _migrate(self) -> None:
+        """轻量迁移: 给老库补齐新增列(只加列, 不动已有数据)。"""
+        cols = {r[1] for r in self._conn.execute("PRAGMA table_info(tasks)")}
+        if "title" not in cols:
+            self._conn.execute("ALTER TABLE tasks ADD COLUMN title TEXT DEFAULT ''")
 
     # ---------------- tasks ----------------
     def create_task(self, filename: str, size: int, hotword: str, audio_path=None) -> str:
@@ -121,13 +143,38 @@ class Store:
             r = self._conn.execute("SELECT * FROM tasks WHERE id=?", (tid,)).fetchone()
         return dict(r) if r else None
 
-    def list_tasks(self, include_deleted=False) -> list[dict]:
-        sql = "SELECT * FROM tasks"
-        if not include_deleted:
-            sql += " WHERE deleted=0"
-        sql += " ORDER BY created_at DESC LIMIT 500"
+    def list_tasks(self, include_deleted=False, q: str = "") -> list[dict]:
+        """任务列表; q 非空时搜标题/文件名/转写内容, 并给一条命中片段。"""
+        q = (q or "").strip()
         with self._lock:
-            return [dict(r) for r in self._conn.execute(sql).fetchall()]
+            if not q:
+                sql = "SELECT * FROM tasks"
+                if not include_deleted:
+                    sql += " WHERE deleted=0"
+                sql += " ORDER BY created_at DESC LIMIT 500"
+                return [dict(r) for r in self._conn.execute(sql).fetchall()]
+            like = f"%{q}%"
+            rows = self._conn.execute(
+                "SELECT DISTINCT t.* FROM tasks t"
+                " LEFT JOIN segments s ON s.task_id=t.id"
+                " WHERE t.deleted=0 AND (t.filename LIKE ? OR t.title LIKE ?"
+                " OR s.raw_text LIKE ? OR s.corrected_text LIKE ?)"
+                " ORDER BY t.created_at DESC LIMIT 200",
+                (like, like, like, like)).fetchall()
+            out = []
+            for r in rows:
+                d = dict(r)
+                seg = self._conn.execute(
+                    "SELECT raw_text, corrected_text FROM segments WHERE task_id=?"
+                    " AND (raw_text LIKE ? OR corrected_text LIKE ?) ORDER BY idx LIMIT 1",
+                    (d["id"], like, like)).fetchone()
+                if seg:
+                    text = seg["corrected_text"] or seg["raw_text"] or ""
+                    pos = text.find(q)
+                    start = max(0, pos - 20) if pos >= 0 else 0
+                    d["match_snippet"] = text[start:start + 90]
+                out.append(d)
+            return out
 
     def recover_on_startup(self) -> dict:
         """服务重启恢复: processing 标记为 failed(可重试); queued 原样保留由 worker 重新入队。"""
@@ -309,6 +356,129 @@ class Store:
                 (tid,)).fetchone()
         return int(r[0])
 
+    # ---------------- 术语表 / 全局替换 ----------------
+    @staticmethod
+    def _effective(row) -> str:
+        return row["corrected_text"] if row["corrected_text"] is not None else (row["raw_text"] or "")
+
+    def list_terms(self) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM terms ORDER BY created_at DESC").fetchall()
+        return [dict(r) for r in rows]
+
+    def add_term(self, wrong: str, right: str) -> None:
+        wrong, right = (wrong or "").strip(), (right or "").strip()
+        if not wrong or not right or wrong == right:
+            raise ValueError("术语需非空且新旧不同")
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO terms(wrong, right, created_at) VALUES(?,?,?)"
+                " ON CONFLICT(wrong) DO UPDATE SET right=excluded.right",
+                (wrong[:50], right[:50], _now()))
+            self._conn.commit()
+
+    def delete_term(self, wrong: str) -> int:
+        with self._lock:
+            cur = self._conn.execute("DELETE FROM terms WHERE wrong=?", ((wrong or "")[:50],))
+            self._conn.commit()
+            return cur.rowcount
+
+    def glossary(self) -> dict[str, str]:
+        with self._lock:
+            rows = self._conn.execute("SELECT wrong, right FROM terms").fetchall()
+        return {r["wrong"]: r["right"] for r in rows if r["wrong"] and r["right"]}
+
+    def glossary_rights(self) -> list[str]:
+        return list(dict.fromkeys(self.glossary().values()))
+
+    def _replace_plan(self, tid: str, old: str, new: str) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT id, idx, raw_text, corrected_text, corrected_by FROM segments"
+            " WHERE task_id=? ORDER BY idx", (tid,)).fetchall()
+        plan = []
+        for r in rows:
+            before = self._effective(r)
+            if old not in before:
+                continue
+            plan.append({
+                "id": r["id"], "idx": r["idx"], "before": before,
+                "after": before.replace(old, new),
+                "old_corrected": r["corrected_text"], "old_by": r["corrected_by"],
+            })
+        return plan
+
+    def preview_replace(self, tid: str, old: str, new: str) -> dict:
+        with self._lock:
+            plan = self._replace_plan(tid, old, new)
+        return {"count": len(plan),
+                "examples": [{"idx": p["idx"], "before": p["before"][:120],
+                              "after": p["after"][:120]} for p in plan[:5]]}
+
+    def apply_replace(self, tid: str, old: str, new: str) -> dict:
+        """把片段有效文本里的 old 全替换为 new(写人工修正层, raw 不动), 可撤销。"""
+        op_id = new_task_id()
+        with self._lock:
+            plan = self._replace_plan(tid, old, new)
+            if not plan:
+                return {"count": 0, "op_id": None, "examples": []}
+            stamp = _now()
+            mapping = []
+            for p in plan:
+                self._conn.execute(
+                    "UPDATE segments SET corrected_text=?, corrected_by='human' WHERE id=?",
+                    (p["after"], p["id"]))
+                self._conn.execute(
+                    "INSERT INTO edits(task_id, segment_id, field, old_value, new_value, ts)"
+                    " VALUES(?,?,?,?,?,?)",
+                    (tid, p["id"], "replace", p["before"], p["after"], stamp))
+                mapping.append({"id": p["id"], "old_text": p["old_corrected"],
+                                "old_by": p["old_by"], "new_text": p["after"]})
+            self._conn.execute(
+                "INSERT INTO replace_ops(id, task_id, from_text, to_text, mapping,"
+                " created_at, undone) VALUES(?,?,?,?,?,?,0)",
+                (op_id, tid, old, new, json.dumps(mapping, ensure_ascii=False), stamp))
+            self._conn.commit()
+        return {"count": len(mapping), "op_id": op_id,
+                "examples": [{"idx": p["idx"], "before": p["before"][:120],
+                              "after": p["after"][:120]} for p in plan[:5]]}
+
+    def undo_replace(self, tid: str, op_id: str) -> dict:
+        with self._lock:
+            op = self._conn.execute(
+                "SELECT * FROM replace_ops WHERE id=? AND task_id=?", (op_id, tid)).fetchone()
+            if not op:
+                raise KeyError("替换记录不存在")
+            if op["undone"]:
+                return {"restored": 0, "skipped": 0, "already_undone": True}
+            mapping = json.loads(op["mapping"] or "[]")
+            restored = skipped = 0
+            stamp = _now()
+            for item in mapping:
+                r = self._conn.execute(
+                    "SELECT corrected_text FROM segments WHERE id=?", (item["id"],)).fetchone()
+                if not r or r["corrected_text"] != item["new_text"]:
+                    skipped += 1
+                    continue
+                self._conn.execute(
+                    "UPDATE segments SET corrected_text=?, corrected_by=? WHERE id=?",
+                    (item["old_text"], item["old_by"], item["id"]))
+                self._conn.execute(
+                    "INSERT INTO edits(task_id, segment_id, field, old_value, new_value, ts)"
+                    " VALUES(?,?,?,?,?,?)",
+                    (tid, item["id"], "undo_replace", item["new_text"],
+                     item["old_text"], stamp))
+                restored += 1
+            self._conn.execute("UPDATE replace_ops SET undone=1 WHERE id=?", (op_id,))
+            self._conn.commit()
+            return {"restored": restored, "skipped": skipped, "already_undone": False}
+
+    def get_replace_op(self, tid: str, op_id: str) -> dict | None:
+        with self._lock:
+            r = self._conn.execute(
+                "SELECT * FROM replace_ops WHERE id=? AND task_id=?", (op_id, tid)).fetchone()
+        return dict(r) if r else None
+
     def get_speakers(self, tid: str) -> list[dict]:
         with self._lock:
             rows = self._conn.execute(
@@ -393,6 +563,11 @@ class Store:
             self._conn.commit()
             return cur.lastrowid
 
+    def get_document(self, doc_id: int) -> dict | None:
+        with self._lock:
+            r = self._conn.execute("SELECT * FROM documents WHERE id=?", (doc_id,)).fetchone()
+        return dict(r) if r else None
+
     def get_documents(self, tid: str, kind: str | None = None) -> list[dict]:
         if kind:
             sql = "SELECT * FROM documents WHERE task_id=? AND kind=? ORDER BY id DESC"
@@ -408,7 +583,8 @@ class Store:
         """删除任务的全部内容(片段/说话人/编辑/文档/AI 任务), 保留一条脱敏墓碑行。"""
         with self._lock:
             r = self._conn.execute("SELECT audio_path FROM tasks WHERE id=?", (tid,)).fetchone()
-            for table in ("segments", "speakers", "edits", "documents", "ai_jobs"):
+            for table in ("segments", "speakers", "edits", "documents", "ai_jobs",
+                          "replace_ops"):
                 self._conn.execute(f"DELETE FROM {table} WHERE task_id=?", (tid,))
             self._conn.execute(
                 "UPDATE tasks SET deleted=1, audio_path=NULL, hotword='', filename='(已删除)',"

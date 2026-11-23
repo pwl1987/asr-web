@@ -101,6 +101,14 @@
   .uItem b{color:#c9d4f0}
   .docView{background:var(--card2);border-radius:10px;padding:14px;white-space:pre-wrap;
     font-size:13.5px;line-height:1.9;max-height:480px;overflow:auto}
+  .docView .ref{color:var(--accent);font-family:var(--mono);font-size:11px;cursor:pointer;
+    text-decoration:none;margin:0 2px}
+  .docView .ref:hover{text-decoration:underline}
+  #termPanel{background:rgba(106,141,255,.06);border:1px solid rgba(106,141,255,.25);
+    border-radius:10px;padding:10px 12px;margin-bottom:10px}
+  #termList .term{display:inline-flex;gap:6px;align-items:center;background:var(--card2);
+    border:1px solid var(--line);border-radius:999px;padding:2px 9px;font-size:12px;margin:0 6px 6px 0}
+  #termList .term button{border:none;background:none;color:var(--muted);cursor:pointer;padding:0 2px}
   .optRow{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
   .optRow input,.optRow select{min-width:120px}
   .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#2a1e22;
@@ -144,7 +152,10 @@
     </div>
     <div class="card">
       <h2><span class="step">2</span>任务列表<span class="hint">点击任务进入工作台</span></h2>
-      <table><thead><tr><th>文件</th><th class="hideS">时长</th><th class="hideS">大小</th>
+      <div class="row" style="margin:0 0 10px">
+        <input type="text" id="taskSearch" placeholder="搜索会议标题 / 文件名 / 转写内容…" style="flex:1;min-width:220px">
+      </div>
+      <table><thead><tr><th>会议</th><th class="hideS">时长</th><th class="hideS">大小</th>
         <th>状态</th><th>时间</th><th></th></tr></thead>
       <tbody id="taskRows"><tr><td colspan="6" class="empty">暂无任务</td></tr></tbody></table>
     </div>
@@ -153,7 +164,7 @@
   <!-- ======== 工作台视图 ======== -->
   <div id="wbView" hidden>
     <div id="playerBar">
-      <div class="nowTitle"><span id="wbTitle"></span><span class="meta" id="wbMeta"></span>
+      <div class="nowTitle"><span id="wbTitle"></span><button class="mini" id="renameBtn" title="重命名会议">✎</button><span class="meta" id="wbMeta"></span>
         <span class="tabs right" id="segTabs">
           <button class="on" data-v="work">校对视图</button><button data-v="raw">原始稿</button>
         </span>
@@ -172,6 +183,7 @@
         <span class="right" style="display:flex;gap:6px;flex-wrap:wrap">
           <button class="mini" id="expTxt">导出 TXT</button>
           <button class="mini" id="expSrt">导出 SRT</button>
+          <button class="mini" id="btnTerms">术语/替换</button>
           <button class="mini primary" id="btnProofread">LLM 忠实校对</button>
         </span>
       </h2>
@@ -181,6 +193,24 @@
         <button class="mini" id="bulkReassign">改派</button>
         <button class="mini" id="bulkSplit">拆分为新说话人</button>
         <button class="mini" id="bulkClear">取消选择</button>
+      </div>
+      <div id="termPanel" hidden>
+        <div class="row">
+          <input type="text" id="rpFrom" placeholder="原文 / 错写" style="flex:1;min-width:140px">
+          <input type="text" id="rpTo" placeholder="替换为" style="flex:1;min-width:140px">
+          <button class="mini" id="rpPreview">预览</button>
+          <button class="mini primary" id="rpApply">全部替换</button>
+          <label class="hint"><input type="checkbox" id="rpSaveTerm" checked> 加入术语表</label>
+        </div>
+        <div class="hint" id="rpResult" style="margin-top:6px"></div>
+        <details style="margin-top:8px"><summary class="hint">全局术语表（后续热词与 LLM 校对后自动纠正）</summary>
+          <div class="row" id="termList" style="margin-top:6px"></div>
+          <div class="row">
+            <input type="text" id="termWrong" placeholder="错写 / 旧写法" style="max-width:170px">
+            <input type="text" id="termRight" placeholder="正确写法" style="max-width:170px">
+            <button class="mini" id="termAdd">添加</button>
+          </div>
+        </details>
       </div>
       <div id="segList"><div class="empty">暂无片段</div></div>
     </div>
@@ -193,7 +223,10 @@
 
     <div class="card">
       <h2><span class="step">C</span>AI 整理与材料
-        <span class="hint right">忠实校对 → 会议理解 → 正式材料</span></h2>
+        <span class="right" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <span class="hint">忠实校对 → 会议理解 → 正式材料</span>
+          <button class="mini primary" id="btnPipeline" title="自动完成校对→理解→当前材料设置">一键出纪要</button>
+        </span></h2>
       <div class="tabs" id="aiTabs">
         <button class="on" data-t="understand">会议理解</button>
         <button data-t="doc">材料生成</button>
@@ -217,10 +250,15 @@
           </select>
           <label class="hint"><input type="checkbox" id="docNames" checked> 保留发言人</label>
           <label class="hint"><input type="checkbox" id="docUnconf" checked> 附待确认问题</label>
+          <label class="hint"><input type="checkbox" id="docCite" checked> 标注片段依据</label>
         </div>
         <div class="row"><button class="primary" id="btnDoc">生成材料</button>
-          <button id="copyDoc" hidden>复制</button><button id="dlDoc" hidden>下载 .md</button></div>
+          <button id="copyDoc" hidden>复制</button><button id="dlDoc" hidden>下载 .md</button>
+          <button id="dlDocx" hidden>下载 Word</button>
+          <button id="editDoc" hidden>编辑</button>
+          <button id="saveDoc" hidden>保存修改</button><button id="cancelDoc" hidden>取消</button></div>
         <div id="docView" class="docView" style="margin-top:10px" hidden></div>
+        <textarea id="docEdit" class="docView" style="margin-top:10px;min-height:420px;width:100%" hidden></textarea>
       </div>
       <div id="aiDocs" style="margin-top:12px" hidden><div class="empty">暂无历史材料</div></div>
     </div>
@@ -232,7 +270,7 @@
 const $ = id => document.getElementById(id);
 const state = {tid:null, task:null, segments:[], speakers:[], selected:new Set(),
                view:"work", understanding:null, pollT:null, nowIdx:-1,
-               watchT:null, job:null};
+               watchT:null, job:null, doc:null};
 const SPK_COLORS=["#6a8dff","#3ecf8e","#e5b567","#c792ea","#4fc3f7","#ef6a6a","#f5a742","#7ed6a5"];
 const spkColor = sid => SPK_COLORS[((sid===null||sid===undefined)?8:sid)%SPK_COLORS.length];
 const spkName = sid => { const s=state.speakers.find(x=>x.speaker_id===sid);
@@ -312,15 +350,20 @@ async function doUpload(f){
 
 /* ---------- 任务列表 ---------- */
 const ST_TXT={queued:"排队中",processing:"处理中",done:"完成",failed:"失败",cancelled:"已取消"};
+let searchT=null;
+$("taskSearch").oninput=()=>{ clearTimeout(searchT); searchT=setTimeout(loadTasks,300); };
 async function loadTasks(){
   try{
-    const tasks=await api("/api/tasks");
+    const q=$("taskSearch").value.trim();
+    const tasks=await api("/api/tasks"+(q?`?q=${encodeURIComponent(q)}`:""));
     const tb=$("taskRows");
-    if(!tasks.length){ tb.innerHTML='<tr><td colspan="6" class="empty">暂无任务</td></tr>'; return; }
+    if(!tasks.length){ tb.innerHTML=`<tr><td colspan="6" class="empty">${q?"没有匹配的会议":"暂无任务"}</td></tr>`; return; }
     tb.innerHTML=tasks.map(t=>{
       const active=t.status==="queued"||t.status==="processing";
+      const title=t.title||t.filename;
+      const sub=[t.title?t.filename:"", t.error||"", t.match_snippet?`…${t.match_snippet}…`:""].filter(Boolean).join(" · ");
       return `<tr class="click" data-id="${t.id}">
-        <td>${esc(t.filename)}<div class="hint">${esc(t.error||"")}</div></td>
+        <td>${esc(title)}<div class="hint">${esc(sub)}</div></td>
         <td class="hideS meta">${t.duration_sec?fmtT(t.duration_sec):"—"}</td>
         <td class="hideS meta">${fmtB(t.size_bytes||0)}</td>
         <td><span class="st ${t.status}">${ST_TXT[t.status]||t.status}${active?"…":""}</span></td>
@@ -362,8 +405,11 @@ async function openTask(tid){
 async function reloadTask(){
   const d=await api(`/api/tasks/${state.tid}/segments`);
   state.task=d.task; state.segments=d.segments; state.speakers=d.speakers;
-  $("wbTitle").textContent=state.task.filename;
-  $("wbMeta").textContent=`${state.task.duration_sec?fmtT(state.task.duration_sec):""} · ${ST_TXT[state.task.status]||state.task.status}`;
+  $("wbTitle").textContent=state.task.title||state.task.filename;
+  $("wbMeta").textContent=[
+    state.task.title?state.task.filename:"",
+    state.task.duration_sec?fmtT(state.task.duration_sec):"",
+    ST_TXT[state.task.status]||state.task.status].filter(Boolean).join(" · ");
   renderSpeakers(); renderSegments();
   const t=state.task;
   if(t.status!=="done"&&!reloadTask._p){
@@ -376,6 +422,18 @@ async function reloadTask(){
   }
   if(t.status==="done"&&reloadTask._p){ clearInterval(reloadTask._p); reloadTask._p=null; }
 }
+$("renameBtn").onclick=async()=>{
+  const cur=state.task?.title||state.task?.filename||"";
+  const v=prompt("会议标题（最多 80 字）", cur);
+  if(v===null) return;
+  const title=v.trim();
+  if(!title) return;
+  try{
+    await api(`/api/tasks/${state.tid}`,{method:"PATCH",
+      headers:{"Content-Type":"application/json"},body:JSON.stringify({title})});
+    await reloadTask(); loadTasks();
+  }catch(e){ toast("重命名失败: "+e.message); }
+};
 
 /* 说话人卡 */
 function renderSpeakers(){
@@ -535,14 +593,123 @@ $("expSrt").onclick=()=>{
     out.map((c,n)=>`${n+1}\n${fmt(c.start)} --> ${fmt(c.end)}\n${c.text}\n`).join("\n"));
 };
 
+/* ---------- 术语 / 全局替换 ---------- */
+let termsCache=[];
+$("btnTerms").onclick=()=>{
+  const p=$("termPanel"); p.hidden=!p.hidden;
+  if(!p.hidden) renderTerms();
+};
+async function renderTerms(){
+  try{
+    termsCache=await api("/api/terms");
+    $("termList").innerHTML=termsCache.length?termsCache.map((t,i)=>
+      `<span class="term">${esc(t.wrong)} → ${esc(t.right)}<button data-term-i="${i}" title="删除">×</button></span>`).join("")
+      :'<span class="hint">暂无术语</span>';
+  }catch(e){}
+}
+$("termList").onclick=async e=>{
+  const i=e.target.dataset.termI; if(i===undefined)return;
+  try{
+    await api("/api/terms/remove",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({wrong:termsCache[Number(i)].wrong})});
+    await renderTerms();
+  }catch(err){ toast(err.message); }
+};
+$("termAdd").onclick=async()=>{
+  const wrong=$("termWrong").value.trim(), right=$("termRight").value.trim();
+  if(!wrong||!right){ toast("术语不能为空"); return; }
+  try{
+    await api("/api/terms",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({wrong,right})});
+    $("termWrong").value=""; $("termRight").value=""; await renderTerms();
+    toast("术语已保存，后续转写/校对自动纠正", true);
+  }catch(e){ toast(e.message); }
+};
+function replaceShow(d, opId){
+  const ex=(d.examples||[]).map(x=>`#${x.idx}: ${esc(x.before)} → ${esc(x.after)}`).join("<br>");
+  $("rpResult").innerHTML=`命中 <b>${d.count}</b> 段${ex?"<br>"+ex:""}`+
+    (opId?` <button class="mini" id="rpUndo">撤销</button>`:"");
+  if(opId) $("rpUndo").onclick=async()=>{
+    try{
+      const r=await api(`/api/tasks/${state.tid}/replace/${opId}/undo`,{method:"POST"});
+      toast(`已撤销 ${r.restored} 段`+(r.skipped?`（${r.skipped} 段已被后续修改，跳过）`:""), true);
+      $("rpResult").innerHTML=""; await reloadTask();
+    }catch(e){ toast("撤销失败: "+e.message); }
+  };
+}
+$("rpPreview").onclick=async()=>{
+  const from=$("rpFrom").value, to=$("rpTo").value;
+  if(!from){ toast("请输入要替换的原文"); return; }
+  try{
+    replaceShow(await api(`/api/tasks/${state.tid}/replace`,{method:"POST",
+      headers:{"Content-Type":"application/json"},body:JSON.stringify({from,to,dry_run:true})}));
+  }catch(e){ toast(e.message); }
+};
+$("rpApply").onclick=async()=>{
+  const from=$("rpFrom").value, to=$("rpTo").value;
+  if(!from){ toast("请输入要替换的原文"); return; }
+  if(!confirm(`确认把「${from}」全部替换为「${to}」？\n（只改修正层，原始转写不动）`)) return;
+  try{
+    const d=await api(`/api/tasks/${state.tid}/replace`,{method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({from,to,save_term:$("rpSaveTerm").checked})});
+    replaceShow(d, d.op_id);
+    await reloadTask();
+    if($("rpSaveTerm").checked) await renderTerms();
+    toast(d.count?`已替换 ${d.count} 段`:"没有命中片段", d.count>0);
+  }catch(e){ toast("替换失败: "+e.message); }
+};
+
 /* ---------- AI 后台任务: 进度 / 取消 / 补缺 ---------- */
-const JOB_LABEL={proofread:"LLM 校对",understand:"会议理解",document:"材料生成"};
+const JOB_LABEL={proofread:"LLM 校对",understand:"会议理解",document:"材料生成",
+                 pipeline:"一键出纪要"};
+let audioCtx=null, titleT=null;
+function ensureAudio(){
+  try{
+    audioCtx=audioCtx||new (window.AudioContext||window.webkitAudioContext)();
+    if(audioCtx.state==="suspended") audioCtx.resume();
+  }catch(e){}
+}
+function beep(ok){
+  if(!audioCtx) return;
+  try{
+    const t=audioCtx.currentTime;
+    [0,1].forEach(k=>{
+      const o=audioCtx.createOscillator(), g=audioCtx.createGain();
+      o.frequency.value=ok?880:440; o.type="sine";
+      g.gain.setValueAtTime(0.0001,t+k*0.18);
+      g.gain.exponentialRampToValueAtTime(0.12,t+k*0.18+0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001,t+k*0.18+0.14);
+      o.connect(g); g.connect(audioCtx.destination);
+      o.start(t+k*0.18); o.stop(t+k*0.18+0.15);
+    });
+  }catch(e){}
+}
+function remind(label, ok){
+  beep(ok);
+  const base=document.title.replace(/^\[[^\]]+\]\s*/,"");
+  if(titleT) clearInterval(titleT);
+  let flip=false;
+  titleT=setInterval(()=>{ flip=!flip; document.title=flip?`[${ok?"完成":"失败"}] ${label}`:base; },900);
+  const stop=()=>{ if(titleT){ clearInterval(titleT); titleT=null; document.title=base; } };
+  window.addEventListener("focus",stop,{once:true});
+  setTimeout(stop,20000);
+  if(window.isSecureContext && "Notification" in window && Notification.permission==="granted"){
+    try{ new Notification(ok?`${label}已完成`:`${label}失败`, {body:"点击回到工作台"}); }catch(e){}
+  }
+}
+function fmtRemain(sec){
+  sec=Math.max(0,Math.round(sec));
+  if(sec<60) return `${sec} 秒`;
+  return `${Math.floor(sec/60)} 分${String(sec%60).padStart(2,"0")} 秒`;
+}
 function jobBarShow(text, busy, missing){
   $("jobBar").hidden=false; $("jobText").textContent=text;
   $("jobSpin").hidden=!busy; $("jobCancel").hidden=!busy;
   $("jobMissing").hidden=!missing;
 }
 async function startJob(path, body){
+  ensureAudio();
   const d=await api(path,{method:"POST",headers:{"Content-Type":"application/json"},
     body:JSON.stringify(body||{})});
   watchJob(d.job_id);
@@ -555,17 +722,28 @@ async function watchJob(jid){
     let j; try{ j=await api(`/api/jobs/${jid}`); }catch(e){ return true; }
     const label=JOB_LABEL[j.kind]||j.kind;
     if(j.status==="queued"||j.status==="running"){
-      jobBarShow(`${label}中… ${j.detail||""}`.trim(), true, false);
+      let extra="";
+      if(j.status==="running" && j.created_at){
+        const elapsed=Date.now()/1000-j.created_at;
+        if(j.kind==="proofread" && j.progress>0.05){
+          const remain=elapsed*(1-j.progress)/j.progress;
+          if(remain>3) extra=` · 约剩 ${fmtRemain(remain)}`;
+        } else if(elapsed>3){
+          extra=` · 已用 ${fmtRemain(elapsed)}`;  // 理解/成文进度非线性, 只报已用时
+        }
+      }
+      jobBarShow(`${label}中… ${j.detail||""}${extra}`.trim(), true, false);
       return false;
     }
     if(state.watchT){ clearInterval(state.watchT); state.watchT=null; }
     state.job=null; $("jobSpin").hidden=true; $("jobCancel").hidden=true;
-    if(j.status==="done"){ await afterJob(j); return true; }
+    if(j.status==="done"){ remind(label, true); await afterJob(j); return true; }
     if(j.status==="cancelled"){
       const extra=j.detail&&!j.detail.includes("已取消")?` ${j.detail}`:"";
       jobBarShow(`${label}已取消${extra}`,false,false);
       toast(`${label}已取消`); await reloadTask(); return true;
     }
+    remind(label, false);
     jobBarShow(`${label}失败: ${j.error||""}`,false,false);
     toast(`${label}失败: ${j.error||""}`); return true;
   };
@@ -584,13 +762,32 @@ async function afterJob(j){
     if(docs.length){ state.understanding=JSON.parse(docs[0].content);
       renderUnderstanding(state.understanding); }
     const fail=(j.result||{}).failed_chunks||0;
+    await reloadTask();  // 自动标题/任务状态刷新
     $("jobBar").hidden=true;
     if(fail) toast(`会议理解部分完成: ${fail} 段分析失败, 可重试`);
     else toast("会议理解已生成", true);
   } else if(j.kind==="document"){
-    const r=j.result||{}; if(r.content) showDoc(r.content);
+    const r=j.result||{};
+    if(r.content){ switchAITab("doc");
+      showDoc({id:r.document_id,content:r.content,kind:r.kind}); }
     if(!$("aiDocs").hidden) loadDocs();
     $("jobBar").hidden=true; toast("材料已生成", true);
+  } else if(j.kind==="pipeline"){
+    const r=j.result||{};
+    await reloadTask();
+    if(r.understanding){
+      try{
+        const docs=await api(`/api/tasks/${state.tid}/documents?kind=understanding`);
+        if(docs.length){ state.understanding=JSON.parse(docs[0].content);
+          renderUnderstanding(state.understanding); }
+      }catch(e){}
+    }
+    const d=r.document||{};
+    if(d.content){ switchAITab("doc");
+      showDoc({id:d.document_id,content:d.content,kind:d.kind}); }
+    if(!$("aiDocs").hidden) loadDocs();
+    $("jobBar").hidden=true;
+    toast("纪要已生成: 校对→理解→材料 全部完成", true);
   }
 }
 async function resumeJob(){
@@ -658,43 +855,100 @@ function renderUnderstanding(u){
 }
 
 /* ---------- AI: 材料 ---------- */
-$("aiTabs").onclick=e=>{ const b=e.target.closest("button"); if(!b)return;
-  [...$("aiTabs").children].forEach(x=>x.classList.toggle("on",x===b));
-  ["understand","doc","docs"].forEach(t=>$("ai"+t.charAt(0).toUpperCase()+t.slice(1)).hidden=t!==b.dataset.t);
-  if(b.dataset.t==="docs") loadDocs();
-};
+function switchAITab(t){
+  [...$("aiTabs").children].forEach(x=>x.classList.toggle("on",x.dataset.t===t));
+  ["understand","doc","docs"].forEach(k=>$("ai"+k.charAt(0).toUpperCase()+k.slice(1)).hidden=k!==t);
+  if(t==="docs") loadDocs();
+}
+$("aiTabs").onclick=e=>{ const b=e.target.closest("button"); if(b) switchAITab(b.dataset.t); };
+
+function kindName(k){
+  return {understanding:"会议理解",transcript:"完整文字稿",outline:"主题大纲",
+          minutes:"会议纪要",report:"情况汇报"}[k]||k||"材料";
+}
+function docOptions(){
+  return {title:$("docTitle").value.trim()||null,
+    audience:$("docAudience").value.trim()||null,
+    word_count:Number($("docWords").value)||null,
+    include_names:$("docNames").checked,
+    include_unconfirmed:$("docUnconf").checked,
+    cite_segments:$("docCite").checked};
+}
 $("btnDoc").onclick=async e=>{
   const b=e.target; b.disabled=true;
-  try{
-    await startJob(`/api/tasks/${state.tid}/documents`,{kind:$("docKind").value,options:{
-      title:$("docTitle").value.trim()||null, audience:$("docAudience").value.trim()||null,
-      word_count:Number($("docWords").value)||null,
-      include_names:$("docNames").checked, include_unconfirmed:$("docUnconf").checked}});
-  }catch(err){ toast("生成失败: "+err.message); }
+  try{ await startJob(`/api/tasks/${state.tid}/documents`,
+    {kind:$("docKind").value,options:docOptions()}); }
+  catch(err){ toast("生成失败: "+err.message); }
   finally{ b.disabled=false; }
 };
-function showDoc(content){ $("docView").hidden=false; $("docView").textContent=content;
-  $("copyDoc").hidden=false; $("dlDoc").hidden=false;
-  $("copyDoc").onclick=()=>copyText(content);
-  $("dlDoc").onclick=()=>saveText(`${$("docKind").selectedOptions[0].textContent}-${stamp()}.md`,content); }
+$("btnPipeline").onclick=async e=>{
+  const b=e.target; b.disabled=true;
+  try{
+    await startJob(`/api/tasks/${state.tid}/pipeline`,
+      {kind:$("docKind").value,options:docOptions()});
+    toast("已开始: 校对 → 理解 → 材料，可离开页面");
+  }catch(err){ toast("启动失败: "+err.message); }
+  finally{ b.disabled=false; }
+};
+function renderDoc(){
+  const text=state.doc?.content||"";
+  $("docView").innerHTML=esc(text).replace(/\[#(\d+)\]/g,
+    (m,id)=>`<a class="ref" data-seek="${id}">#${id}</a>`);
+}
+function showDoc(doc){
+  if(typeof doc==="string") doc={content:doc};
+  state.doc=doc;
+  $("docView").hidden=false; $("docEdit").hidden=true;
+  renderDoc();
+  $("copyDoc").hidden=false; $("dlDoc").hidden=false; $("dlDocx").hidden=!doc.id;
+  $("editDoc").hidden=!doc.id; $("saveDoc").hidden=true; $("cancelDoc").hidden=true;
+  $("copyDoc").onclick=()=>copyText(state.doc.content||"");
+  $("dlDoc").onclick=()=>saveText(`${kindName(state.doc.kind)}-${stamp()}.md`,state.doc.content||"");
+  $("dlDocx").onclick=()=>{ if(state.doc?.id) location.href=`/api/documents/${state.doc.id}/docx`; };
+}
+$("docView").addEventListener("click",e=>{
+  const r=e.target.closest("[data-seek]"); if(!r)return;
+  const s=state.segments.find(x=>x.idx===Number(r.dataset.seek));
+  if(s) seekTo(s.start_ms);
+});
+$("editDoc").onclick=()=>{
+  if(!state.doc) return;
+  $("docEdit").value=state.doc.content||"";
+  $("docView").hidden=true; $("docEdit").hidden=false;
+  $("editDoc").hidden=true; $("saveDoc").hidden=false; $("cancelDoc").hidden=false;
+};
+$("cancelDoc").onclick=()=>{ showDoc(state.doc); };
+$("saveDoc").onclick=async()=>{
+  if(!state.doc?.id) return;
+  const content=$("docEdit").value;
+  if(!content.trim()){ toast("内容不能为空"); return; }
+  try{
+    const d=await api(`/api/documents/${state.doc.id}/edit`,{method:"POST",
+      headers:{"Content-Type":"application/json"},body:JSON.stringify({content})});
+    showDoc({id:d.document_id,content:d.content,kind:d.kind});
+    await loadDocs(); toast("已保存为新版本", true);
+  }catch(e){ toast("保存失败: "+e.message); }
+};
 async function loadDocs(){
   try{
     const docs=await api(`/api/tasks/${state.tid}/documents`);
-    const names={understanding:"会议理解",transcript:"完整文字稿",outline:"主题大纲",
-      minutes:"会议纪要",report:"情况汇报"};
-    $("aiDocs").innerHTML=docs.length?docs.map(d=>
-      `<div class="uItem"><b>${names[d.kind]||d.kind}</b>
+    $("aiDocs").innerHTML=docs.length?docs.map(d=>{
+      let meta={}; try{ meta=JSON.parse(d.meta||"{}"); }catch(e){}
+      const edited=meta._edited?'<span class="tag">手动修改</span>':"";
+      return `<div class="uItem"><b>${kindName(d.kind)}</b>${edited}
         <span class="meta">${new Date(d.created_at*1000).toLocaleString("zh-CN",{hour12:false})}</span>
-        <div class="row"><button class="mini" data-doc="${d.id}">查看</button></div></div>`).join("")
-      :'<div class="empty">暂无历史材料</div>';
-  }catch{}
+        <div class="row"><button class="mini" data-doc="${d.id}">查看</button></div></div>`;
+    }).join(""):'<div class="empty">暂无历史材料</div>';
+  }catch(e){}
 }
 $("aiDocs").addEventListener("click",async e=>{
   const b=e.target.closest("[data-doc]"); if(!b)return;
-  const docs=await api(`/api/tasks/${state.tid}/documents`);
-  const d=docs.find(x=>x.id===Number(b.dataset.doc));
-  if(d){ if(d.kind==="understanding") renderUnderstanding(JSON.parse(d.content));
-    else showDoc(d.content); window.scrollTo({top:document.body.scrollHeight,behavior:"smooth"}); }
+  try{
+    const d=await api(`/api/documents/${Number(b.dataset.doc)}`);
+    if(d.kind==="understanding") renderUnderstanding(JSON.parse(d.content));
+    else showDoc({id:d.id,content:d.content,kind:d.kind});
+    window.scrollTo({top:document.body.scrollHeight,behavior:"smooth"});
+  }catch(err){ toast(err.message); }
 });
 
 /* 启动 */

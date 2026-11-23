@@ -87,9 +87,12 @@ class Worker:
                 if not pipeline.asr_ready():
                     raise RuntimeError("ASR 模型未就绪(等待超时)")
             self.store.update_task(tid, stage="asr", duration_sec=duration)
+            rights = await asyncio.to_thread(self.store.glossary_rights)
+            hotword = " ".join(dict.fromkeys(
+                ([task["hotword"].strip()] if task["hotword"] else []) + rights))
             async with self.asr_sem:
                 segments = await asyncio.to_thread(
-                    pipeline.transcribe_wav, str(wav), task["hotword"] or "")
+                    pipeline.transcribe_wav, str(wav), hotword)
             audio_path = Path(config.AUDIO_DIR) / f"{tid}.wav"
             shutil.move(str(wav), str(audio_path))
             await asyncio.to_thread(self.store.replace_segments, tid, segments)

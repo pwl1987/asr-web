@@ -14,6 +14,7 @@ import secrets
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import (HTMLResponse, JSONResponse, RedirectResponse, Response,
@@ -22,6 +23,7 @@ from fastapi.staticfiles import StaticFiles
 
 import config
 import pipeline
+from docx_export import markdown_to_docx
 from ai_worker import AIWorker
 from store import Store
 from worker import Worker
@@ -212,8 +214,8 @@ async def create_task(request: Request, file: UploadFile = File(...), hotword: s
 
 
 @app.get("/api/tasks")
-async def list_tasks():
-    return store.list_tasks()
+async def list_tasks(q: str = ""):
+    return store.list_tasks(q=q)
 
 
 @app.get("/api/tasks/{tid}")
@@ -222,6 +224,22 @@ async def get_task(tid: str):
     if not t or t["deleted"]:
         raise HTTPException(404, "任务不存在")
     return t
+
+
+@app.patch("/api/tasks/{tid}")
+async def patch_task(tid: str, payload: dict):
+    t = store.get_task(tid)
+    if not t or t["deleted"]:
+        raise HTTPException(404, "任务不存在")
+    if "title" not in payload:
+        raise HTTPException(400, "只支持修改 title")
+    title = str(payload.get("title") or "").strip()
+    if not title:
+        raise HTTPException(400, "标题不能为空")
+    if len(title) > 80:
+        raise HTTPException(400, "标题最多 80 字")
+    store.update_task(tid, title=title)
+    return {"title": title}
 
 
 @app.post("/api/tasks/{tid}/cancel")
@@ -419,6 +437,67 @@ async def task_audio(tid: str, request: Request):
         headers={"Content-Length": str(size), "Accept-Ranges": "bytes"})
 
 
+# ---------------------------------------------------------------- 术语表 / 全局替换
+
+@app.get("/api/terms")
+async def list_terms():
+    return store.list_terms()
+
+
+@app.post("/api/terms")
+async def add_term(payload: dict):
+    wrong = str(payload.get("wrong") or "").strip()
+    right = str(payload.get("right") or "").strip()
+    if not wrong or not right:
+        raise HTTPException(400, "wrong/right 不能为空")
+    if wrong == right:
+        raise HTTPException(400, "新旧写法相同")
+    if len(wrong) > 50 or len(right) > 50:
+        raise HTTPException(400, "术语最长 50 字")
+    store.add_term(wrong, right)
+    return {"wrong": wrong, "right": right}
+
+
+@app.post("/api/terms/remove")
+async def remove_term(payload: dict):
+    n = store.delete_term(str(payload.get("wrong") or ""))
+    return {"removed": n}
+
+
+@app.post("/api/tasks/{tid}/replace")
+async def replace_text(tid: str, payload: dict):
+    t = store.get_task(tid)
+    if not t or t["deleted"]:
+        raise HTTPException(404, "任务不存在")
+    old = str(payload.get("from") or "")
+    new = str(payload.get("to") or "")
+    if not old:
+        raise HTTPException(400, "from 不能为空")
+    if old == new:
+        raise HTTPException(400, "from 与 to 相同")
+    if len(old) > 100 or len(new) > 100:
+        raise HTTPException(400, "替换内容最长 100 字")
+    if payload.get("dry_run"):
+        return store.preview_replace(tid, old, new)
+    res = store.apply_replace(tid, old, new)
+    if payload.get("save_term") and res["count"]:
+        try:
+            store.add_term(old, new)
+        except ValueError:
+            pass
+    return res
+
+
+@app.post("/api/tasks/{tid}/replace/{op_id}/undo")
+async def undo_replace(tid: str, op_id: str):
+    if not store.get_task(tid):
+        raise HTTPException(404, "任务不存在")
+    try:
+        return store.undo_replace(tid, op_id)
+    except KeyError as e:
+        raise HTTPException(404, str(e))
+
+
 # ---------------------------------------------------------------- AI 后台任务
 
 def _job_view(job: dict) -> dict:
@@ -439,11 +518,18 @@ def _active_job_or_409(tid: str) -> dict:
     return t
 
 
+def _ensure_no_pipeline(tid: str) -> None:
+    if any(j["kind"] == "pipeline"
+           for j in store.list_jobs(tid, active_only=True, limit=10)):
+        raise HTTPException(409, "一键流水线进行中, 请等待完成或取消")
+
+
 @app.post("/api/tasks/{tid}/proofread", status_code=202)
 async def start_proofread(tid: str, payload: dict | None = None):
     t = _active_job_or_409(tid)
     if t["status"] != "done":
         raise HTTPException(409, "转写未完成")
+    _ensure_no_pipeline(tid)
     if not store.get_segments(tid):
         raise HTTPException(409, "无转写片段")
     body = payload or {}
@@ -460,6 +546,7 @@ async def start_proofread(tid: str, payload: dict | None = None):
 @app.post("/api/tasks/{tid}/understand", status_code=202)
 async def start_understand(tid: str):
     _active_job_or_409(tid)
+    _ensure_no_pipeline(tid)
     if not store.get_segments(tid):
         raise HTTPException(409, "无转写片段")
     existing = store.find_active_job(tid, "understand")
@@ -473,6 +560,7 @@ async def start_understand(tid: str):
 @app.post("/api/tasks/{tid}/documents", status_code=202)
 async def start_document(tid: str, payload: dict):
     _active_job_or_409(tid)
+    _ensure_no_pipeline(tid)
     kind = payload.get("kind") or ""
     if kind not in pipeline._DOC_KINDS:
         raise HTTPException(400, f"kind 必须是 {list(pipeline._DOC_KINDS)}")
@@ -486,6 +574,33 @@ async def start_document(tid: str, payload: dict):
     if existing:
         return {"job_id": existing, "deduplicated": True}
     jid = store.create_job(tid, "document", params)
+    await ai_worker.enqueue(jid)
+    return {"job_id": jid, "status": "queued"}
+
+
+@app.post("/api/tasks/{tid}/pipeline", status_code=202)
+async def start_pipeline(tid: str, payload: dict | None = None):
+    """一键流水线: 校对(默认只补未校段) → 会议理解 → 指定材料。"""
+    t = _active_job_or_409(tid)
+    if t["status"] != "done":
+        raise HTTPException(409, "转写未完成")
+    if not store.get_segments(tid):
+        raise HTTPException(409, "无转写片段")
+    body = payload or {}
+    kind = body.get("kind") or "minutes"
+    if kind not in pipeline._DOC_KINDS:
+        raise HTTPException(400, f"kind 必须是 {list(pipeline._DOC_KINDS)}")
+    options = body.get("options") or {}
+    if not isinstance(options, dict):
+        raise HTTPException(400, "options 必须是对象")
+    existing = store.find_active_job(tid, "pipeline")
+    if existing:
+        return {"job_id": existing, "deduplicated": True}
+    if store.has_active_job(tid):
+        raise HTTPException(409, "已有 AI 任务进行中, 请等待完成或取消")
+    params = {"kind": kind, "options": options,
+              "only_missing": bool(body.get("only_missing", True))}
+    jid = store.create_job(tid, "pipeline", params)
     await ai_worker.enqueue(jid)
     return {"job_id": jid, "status": "queued"}
 
@@ -522,6 +637,56 @@ async def cancel_job(jid: str):
 @app.get("/api/tasks/{tid}/documents")
 async def list_documents(tid: str, kind: str | None = None):
     return store.get_documents(tid, kind)
+
+
+@app.get("/api/documents/{doc_id}")
+async def get_document(doc_id: int):
+    d = store.get_document(doc_id)
+    if not d:
+        raise HTTPException(404, "材料不存在")
+    t = store.get_task(d["task_id"])
+    if not t or t["deleted"]:
+        raise HTTPException(404, "任务不存在")
+    return d
+
+
+@app.post("/api/documents/{doc_id}/edit")
+async def edit_document(doc_id: int, payload: dict):
+    """人工编辑材料 → 生成新版本(原版本保留, 历史可追溯)。"""
+    d = store.get_document(doc_id)
+    if not d:
+        raise HTTPException(404, "材料不存在")
+    t = store.get_task(d["task_id"])
+    if not t or t["deleted"]:
+        raise HTTPException(404, "任务不存在")
+    content = str(payload.get("content") or "").strip()
+    if not content:
+        raise HTTPException(400, "内容不能为空")
+    try:
+        meta = json.loads(d["meta"] or "{}")
+    except (TypeError, ValueError):
+        meta = {}
+    meta.update({"_edited": True, "_from": doc_id})
+    new_id = store.put_document(d["task_id"], d["kind"], content, meta)
+    return {"document_id": new_id, "kind": d["kind"], "content": content}
+
+
+@app.get("/api/documents/{doc_id}/docx")
+async def download_docx(doc_id: int):
+    d = store.get_document(doc_id)
+    if not d:
+        raise HTTPException(404, "材料不存在")
+    t = store.get_task(d["task_id"])
+    if not t or t["deleted"]:
+        raise HTTPException(404, "任务不存在")
+    kind_name = pipeline._DOC_KINDS.get(d["kind"], (d["kind"], ""))[0]
+    title = (t.get("title") or t["filename"] or "会议材料").strip()
+    fname = f"{title}-{kind_name}".replace("/", "_").replace("\\", "_") + ".docx"
+    data = await asyncio.to_thread(markdown_to_docx, d["content"], fname[:-5])
+    return Response(
+        data,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(fname)}"})
 
 
 # ---------------------------------------------------------------- legacy 兼容

@@ -16,7 +16,11 @@ FunASR Paraformer 中文会议转写 + LLM 校对/整理的本地 Web 工作台�
   2. **会议理解**——主题/讨论/观点/分歧/决定/建议/待办/待确认，严格区分"建议≠通过"，全部条目带 `segment_ids` 溯源，非法引用过滤并计数；长稿自动分块提取后合并，输出截断时二分重试
   3. **正式材料**——完整文字稿/主题大纲/会议纪要/情况汇报四种，可配标题/受众/字数/语气/是否保留发言人/是否附待确认；截断自动续写并在仍截断时标注
 - **可进度、可取消**：AI 任务返回 `job_id`，前端显示批次进度、支持取消（当前批次结束后生效）；刷新/离开页面后可继续查看；服务重启自动恢复排队任务
-- **导出**：TXT / SRT（含说话人与时间）/ Markdown
+- **一键出纪要**：自动串起"校对（默认只补未校段）→ 理解 → 材料"；可离开页面，完成后标题闪烁+提示音；材料生成时自动用会议主题命名任务
+- **少改二十遍**：术语表（后续热词 + LLM 校对后自动纠正）与全文替换（预览/撤销），只改人工修正层，原始转写不动
+- **找得到**：任务标题可改、理解后自动命名，支持按标题/文件名/转写内容搜索并显示命中片段
+- **交付闭环**：材料内 `[#片段]` 引用可直接回听；在线编辑材料生成新版本（旧版保留）；导出 Markdown / Word(.docx)
+- **导出**：TXT / SRT（含说话人与时间）/ Markdown / Word
 - **安全**：Token 鉴权（cookie / Bearer / `?token=`），未配置时启动自动生成并落盘 `data/.auth-token`(0600)；上传流式限长、解码时长上限、ffmpeg 超时与并发限制、GPU 上 ASR 串行
 
 ## 架构
@@ -84,7 +88,8 @@ ufw allow 8466/tcp
 | `GET /api/ping` | 免鉴权探活 |
 | `GET /api/health` | 模型/限制状态（需鉴权） |
 | `POST /api/tasks` | multipart 上传(`file`,`hotword?`) → `{task_id}`（重复提交自动去重） |
-| `GET /api/tasks` / `GET /api/tasks/{id}` | 任务列表 / 详情 |
+| `GET /api/tasks` / `GET /api/tasks/{id}` | 任务列表（`?q=`搜标题/文件名/转写内容）/ 详情 |
+| `PATCH /api/tasks/{id}` | 改会议标题（`{title}`，最多 80 字） |
 | `POST /api/tasks/{id}/cancel·retry·delete` | 取消(未进 ASR 前)/重试/删除(清数据与文件) |
 | `GET /api/tasks/{id}/audio` | 回放（支持 Range） |
 | `GET /api/tasks/{id}/segments` | 片段+说话人+编辑历史 |
@@ -93,10 +98,16 @@ ufw allow 8466/tcp
 | `POST /api/tasks/{id}/proofread` | 阶段 A：创建校对 job（`{only_missing?}`可直接补缺）→ 202 `{job_id}` |
 | `POST /api/tasks/{id}/understand` | 阶段 B：创建会议理解 job → 202 `{job_id}` |
 | `POST /api/tasks/{id}/documents` | 阶段 C：创建材料生成 job（`kind`+`options`）→ 202 `{job_id}` |
+| `POST /api/tasks/{id}/pipeline` | 一键流水线：校对(只补未校)→理解→材料 → 202 `{job_id}` |
+| `GET /api/terms` / `POST /api/terms` / `POST /api/terms/remove` | 全局术语表（后续热词 + 校对后自动纠正） |
+| `POST /api/tasks/{id}/replace` | 全文替换（`{from,to,dry_run?,save_term?}`；只改修正层，返回 `op_id`） |
+| `POST /api/tasks/{id}/replace/{op_id}/undo` | 撤销一次全文替换（只回滚未被后续修改的片段） |
 | `GET /api/jobs/{job_id}` | job 状态/进度/结果（`status=queued|running|done|failed|cancelled`） |
 | `GET /api/tasks/{id}/jobs` | 任务的 AI job 历史（`?active=1&kind=...`） |
 | `POST /api/jobs/{job_id}/cancel` | 取消（排队立即生效；运行中当前批次结束后生效） |
 | `GET /api/tasks/{id}/documents` | 历史材料 |
+| `GET /api/documents/{id}` / `POST /api/documents/{id}/edit` | 材料详情 / 人工编辑（生成新版本，旧版保留） |
+| `GET /api/documents/{id}/docx` | 下载 Word（Markdown 子集转 DOCX） |
 | `POST /api/transcribe` | 兼容旧接口：同步转写（不建任务） |
 | `POST /api/verify` | 兼容旧接口：整段校对/整理 |
 
@@ -122,10 +133,12 @@ ufw allow 8466/tcp
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest tests/ -q     # 40 项桩测试, 不依赖真实 GPU/LLM
+python -m pytest tests/ -q     # 46 项桩测试, 不依赖真实 GPU/LLM
 ```
 
 GitHub Actions 会对每次 push/PR 跑同一套桩测试（`.github/workflows/ci.yml`）。
+
+Word 导出覆盖标题/列表/粗体/表格等常见 Markdown 子集，复杂排版（代码块、嵌套表）会退化为纯文本。
 
 真实端到端（合成 3 人会议）脚本：`tests/gen_meeting.py`（Mac 生成）+ `tests/e2e_eval.py`（服务器执行，输出 CER/说话人/提取结果）。
 
@@ -140,6 +153,9 @@ GitHub Actions 会对每次 push/PR 跑同一套桩测试（`.github/workflows/c
 - 删除任务是**硬删除**：片段/说话人/编辑历史/材料/AI job 与音频一并清除，不可恢复。
 - 转写成功后原始上传默认清理（只留 16k mono wav）；设 `ASR_KEEP_UPLOAD=1` 可保留原始音频。
 - 极长会议的说话人重编号依赖聚类结果，同人多标签需人工合并。
+- 全文替换只改修正层（原始转写不可变），撤销只回滚"之后没被再改过"的片段；术语表全局生效，误设会一直影响后续校对，可在面板删除。
+- 一键流水线默认 `only_missing=true`（复用已有校对，避免重复花 LLM 成本）；要整体重校请单独点「LLM 忠实校对」。
+- 材料引用 `[#id]` 由 LLM 标注，系统会清掉不存在的 id，但不能保证每条结论都有引用。
 - `?token=` 仍可用于脚本调用，但会写进 uvicorn 访问日志前被脱敏为 `token=***`；生产建议用 Bearer。
 
 ## License

@@ -134,6 +134,7 @@ def _clean_data():
     with app_mod.store._lock:
         app_mod.store._conn.executescript(
             "DELETE FROM tasks; DELETE FROM segments; DELETE FROM speakers;"
-            " DELETE FROM edits; DELETE FROM documents; DELETE FROM ai_jobs;")
+            " DELETE FROM edits; DELETE FROM documents; DELETE FROM ai_jobs;"
+            " DELETE FROM terms; DELETE FROM replace_ops;")
         app_mod.store._conn.commit()
     yield
