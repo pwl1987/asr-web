@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>语音转写工作台 · asr-web</title>
+<title>会议转写工作台 · asr-web</title>
 <style>
   :root{
     --bg:#0e1013; --card:#15181d; --card2:#1a1e25; --line:rgba(255,255,255,.08);
@@ -15,321 +15,604 @@
   [hidden]{display:none !important}
   body{margin:0;background:var(--bg);color:var(--text);
     font:14px/1.7 -apple-system,"PingFang SC","Noto Sans SC","Microsoft YaHei",sans-serif;}
-  .wrap{max-width:880px;margin:0 auto;padding:28px 20px 80px}
-  header{display:flex;align-items:center;justify-content:space-between;margin-bottom:22px}
-  h1{font-size:19px;margin:0;font-weight:650;letter-spacing:.5px}
-  h1 .sub{color:var(--muted);font-weight:400;font-size:12px;margin-left:10px;letter-spacing:0}
+  .wrap{max-width:960px;margin:0 auto;padding:20px 16px 90px}
+  header{display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap}
+  h1{font-size:18px;margin:0;font-weight:650;letter-spacing:.5px}
+  h1 .sub{color:var(--muted);font-weight:400;font-size:12px;margin-left:8px}
   .pill{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--muted);
-    background:var(--card);border:1px solid var(--line);border-radius:999px;padding:5px 13px}
+    background:var(--card);border:1px solid var(--line);border-radius:999px;padding:4px 12px}
   .dot{width:8px;height:8px;border-radius:50%;background:var(--muted)}
   .dot.ok{background:var(--ok);box-shadow:0 0 8px var(--ok)}
-  .dot.err{background:var(--err);box-shadow:0 0 8px var(--err)}
+  .dot.err{background:var(--err)}
   .dot.busy{background:var(--warn);animation:pulse 1.2s infinite}
   @keyframes pulse{50%{opacity:.35}}
-  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;
-    padding:18px;margin-bottom:18px}
-  .card h2{font-size:13px;margin:0 0 14px;color:var(--muted);font-weight:600;
-    letter-spacing:1px;display:flex;align-items:center;gap:8px}
-  .step{width:20px;height:20px;border-radius:6px;background:var(--card2);
-    display:inline-flex;align-items:center;justify-content:center;font-size:11px;color:var(--accent)}
-  /* 上传区 */
-  #drop{border:1.5px dashed rgba(255,255,255,.18);border-radius:12px;padding:30px 16px;
-    text-align:center;cursor:pointer;transition:.2s;color:var(--muted)}
-  #drop:hover,#drop.over{border-color:var(--accent);background:rgba(106,141,255,.06);color:var(--text)}
-  #drop b{color:var(--text);font-weight:600}
-  .row{display:flex;gap:10px;margin-top:12px;flex-wrap:wrap;align-items:center}
+  .right{margin-left:auto}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:14px}
+  .card h2{font-size:13px;margin:0 0 12px;color:var(--muted);font-weight:600;letter-spacing:1px;
+    display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .step{width:20px;height:20px;border-radius:6px;background:var(--card2);color:var(--accent);
+    display:inline-flex;align-items:center;justify-content:center;font-size:11px;flex:none}
   button{background:var(--card2);border:1px solid var(--line);color:var(--text);
-    border-radius:9px;padding:8px 16px;font-size:13px;cursor:pointer;transition:.15s}
+    border-radius:9px;padding:7px 14px;font-size:13px;cursor:pointer;transition:.15s}
   button:hover:not(:disabled){border-color:var(--accent);color:var(--accent)}
-  button:disabled{opacity:.45;cursor:not-allowed}
+  button:disabled{opacity:.4;cursor:not-allowed}
   button.primary{background:linear-gradient(135deg,var(--accent),var(--accent2));border:none;
-    color:#fff;font-weight:600;padding:9px 22px}
+    color:#fff;font-weight:600;padding:8px 18px}
   button.primary:hover:not(:disabled){filter:brightness(1.12);color:#fff}
-  button.rec{color:var(--err);border-color:rgba(239,106,106,.4)}
-  button.rec.on{background:rgba(239,106,106,.15);animation:pulse 1.2s infinite}
-  input[type=text]{background:var(--card2);border:1px solid var(--line);color:var(--text);
-    border-radius:9px;padding:8px 12px;font-size:13px;flex:1;min-width:180px;outline:none}
-  input[type=text]:focus{border-color:var(--accent)}
+  button.danger{color:var(--err);border-color:rgba(239,106,106,.35)}
+  button.mini{padding:3px 9px;font-size:12px;border-radius:7px}
+  input[type=text],select,textarea{background:var(--card2);border:1px solid var(--line);color:var(--text);
+    border-radius:9px;padding:8px 12px;font-size:13px;outline:none;font-family:inherit}
+  input[type=text]:focus,textarea:focus,select:focus{border-color:var(--accent)}
   .hint{font-size:12px;color:var(--muted)}
-  .timer{font-family:var(--mono);font-size:12px;color:var(--warn)}
-  /* 文本区 */
-  .toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;align-items:center}
-  .tabs{display:flex;background:var(--card2);border-radius:9px;padding:3px;border:1px solid var(--line)}
-  .tabs button{border:none;background:none;padding:5px 14px;border-radius:7px;font-size:12px;color:var(--muted)}
-  .tabs button.on{background:var(--accent);color:#fff}
-  textarea{width:100%;min-height:160px;background:var(--card2);border:1px solid var(--line);
-    color:var(--text);border-radius:10px;padding:12px;font-size:13.5px;line-height:1.8;
-    resize:vertical;outline:none;font-family:inherit}
-  textarea:focus{border-color:var(--accent)}
-  .seg{padding:8px 12px;border-radius:9px;margin-bottom:8px;background:var(--card2);
-    border-left:3px solid var(--spk,#6a8dff)}
-  .seg .who{font-size:11px;color:var(--spk,#6a8dff);font-weight:700;margin-right:8px}
-  .seg .ts{font-size:11px;color:var(--muted);font-family:var(--mono);margin-right:10px}
-  .empty{color:var(--muted);text-align:center;padding:26px;font-size:13px}
-  /* 校验区 */
-  .opts{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:14px;font-size:13px;color:var(--muted)}
-  .opts label{display:inline-flex;align-items:center;gap:6px;cursor:pointer}
-  .opts input{accent-color:var(--accent)}
-  .chg{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}
-  .chip{background:var(--card2);border:1px solid var(--line);border-radius:8px;
-    padding:5px 10px;font-size:12px;max-width:100%}
-  .chip del{color:var(--err);text-decoration:line-through;margin-right:6px}
-  .chip ins{color:var(--ok);text-decoration:none;margin-right:6px}
-  .chip .why{color:var(--muted)}
-  .diff ins{background:rgba(62,207,142,.18);color:var(--ok);text-decoration:none;border-radius:3px;padding:0 2px}
-  .diff del{background:rgba(239,106,106,.16);color:var(--err);text-decoration:line-through;border-radius:3px;padding:0 2px}
-  .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#2a1e22;
-    color:var(--err);border:1px solid rgba(239,106,106,.4);padding:10px 18px;border-radius:10px;
-    font-size:13px;display:none;z-index:9;max-width:80vw}
+  .meta{font-size:12px;color:var(--muted);font-family:var(--mono)}
   .spin{display:inline-block;width:13px;height:13px;border:2px solid var(--line);
     border-top-color:var(--accent);border-radius:50%;animation:rot .8s linear infinite;vertical-align:-2px}
   @keyframes rot{to{transform:rotate(360deg)}}
-  .meta{font-size:12px;color:var(--muted);font-family:var(--mono)}
-  .right{margin-left:auto}
-  #verifyBtnWrap{margin-top:4px}
+  #drop{border:1.5px dashed rgba(255,255,255,.18);border-radius:12px;padding:24px 16px;
+    text-align:center;cursor:pointer;transition:.2s;color:var(--muted)}
+  #drop.over,#drop:hover{border-color:var(--accent);background:rgba(106,141,255,.06);color:var(--text)}
+  .row{display:flex;gap:10px;margin-top:10px;flex-wrap:wrap;align-items:center}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{color:var(--muted);font-weight:500;text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+  td{padding:7px 8px;border-bottom:1px solid rgba(255,255,255,.04);vertical-align:middle}
+  tr.click td{cursor:pointer}
+  tr.click:hover td{background:rgba(106,141,255,.05)}
+  .st{font-size:12px;padding:2px 9px;border-radius:999px;border:1px solid var(--line);white-space:nowrap}
+  .st.done{color:var(--ok);border-color:rgba(62,207,142,.4)}
+  .st.failed{color:var(--err);border-color:rgba(239,106,106,.4)}
+  .st.processing,.st.queued{color:var(--warn);border-color:rgba(229,181,103,.4)}
+  .st.cancelled{color:var(--muted)}
+  #playerBar{position:sticky;top:0;z-index:5;background:rgba(14,16,19,.94);backdrop-filter:blur(8px);
+    padding:10px 0;border-bottom:1px solid var(--line);margin-bottom:14px}
+  #player{width:100%;height:40px}
+  .nowTitle{font-size:13px;font-weight:600;margin-bottom:6px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .seg{display:flex;gap:8px;padding:7px 10px;border-radius:9px;margin-bottom:6px;
+    background:var(--card2);border-left:3px solid var(--spk,#6a8dff);align-items:flex-start}
+  .seg.now{outline:1.5px solid var(--accent);background:rgba(106,141,255,.08)}
+  .seg .who{flex:none}
+  .seg .who select{background:none;border:none;color:var(--spk,#6a8dff);font-weight:700;font-size:12px;
+    padding:2px 4px;cursor:pointer;-webkit-appearance:none;appearance:none;max-width:110px}
+  .seg .who select option{color:var(--text);background:var(--card2)}
+  .seg .ts{flex:none;font-size:11px;color:var(--muted);font-family:var(--mono);
+    margin-top:6px;cursor:pointer;text-decoration:none}
+  .seg .ts:hover{color:var(--accent)}
+  .seg .txt{flex:1;min-width:0;cursor:pointer;line-height:1.75;word-break:break-word}
+  .seg .txt .raw{color:var(--muted);text-decoration:line-through;text-decoration-color:rgba(239,106,106,.5)}
+  .seg textarea{width:100%;min-height:60px}
+  .seg .acts{flex:none;display:flex;gap:4px;margin-top:4px}
+  .seg input[type=checkbox]{accent-color:var(--accent);margin-top:8px}
+  .spkChip{display:inline-flex;align-items:center;gap:6px;background:var(--card2);
+    border:1px solid var(--line);border-radius:999px;padding:4px 10px;margin:0 8px 8px 0;font-size:13px}
+  .spkChip .c{width:10px;height:10px;border-radius:50%;background:var(--spk)}
+  .spkChip input{border:none;background:none;color:var(--text);width:90px;font-size:13px;padding:2px}
+  .tabs{display:flex;background:var(--card2);border-radius:9px;padding:3px;border:1px solid var(--line)}
+  .tabs button{border:none;background:none;padding:5px 13px;border-radius:7px;font-size:12px;color:var(--muted)}
+  .tabs button.on{background:var(--accent);color:#fff}
+  .uTitle{font-size:15px;font-weight:650;margin-bottom:10px}
+  .uSec{margin-bottom:12px}
+  .uSec h3{font-size:12px;color:var(--muted);margin:0 0 6px;letter-spacing:1px}
+  .uItem{background:var(--card2);border-radius:9px;padding:8px 12px;margin-bottom:6px;line-height:1.7}
+  .uItem .ref{display:inline-block;font-size:11px;color:var(--accent);font-family:var(--mono);
+    margin-right:8px;cursor:pointer;text-decoration:none}
+  .uItem .ref:hover{text-decoration:underline}
+  .uItem .tag{font-size:11px;color:var(--warn);border:1px solid rgba(229,181,103,.4);
+    border-radius:6px;padding:1px 6px;margin-left:6px;white-space:nowrap}
+  .uItem b{color:#c9d4f0}
+  .docView{background:var(--card2);border-radius:10px;padding:14px;white-space:pre-wrap;
+    font-size:13.5px;line-height:1.9;max-height:480px;overflow:auto}
+  .optRow{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+  .optRow input,.optRow select{min-width:120px}
+  .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#2a1e22;
+    color:var(--err);border:1px solid rgba(239,106,106,.4);padding:10px 18px;border-radius:10px;
+    font-size:13px;display:none;z-index:99;max-width:85vw}
+  .toast.ok{background:#16241d;color:var(--ok);border-color:rgba(62,207,142,.4)}
+  #bulkBar{background:rgba(106,141,255,.1);border:1px solid rgba(106,141,255,.3);
+    border-radius:10px;padding:8px 12px;margin-bottom:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .empty{color:var(--muted);text-align:center;padding:22px;font-size:13px}
+  @media (max-width:640px){
+    .seg{flex-wrap:wrap}
+    .seg .ts{order:3;margin-left:2px}
+    .hideS{display:none}
+  }
 </style>
 </head>
 <body>
 <div class="wrap">
   <header>
-    <h1>语音转写工作台<span class="sub">FunASR Paraformer · GPU2 :8466</span></h1>
-    <div class="pill"><span class="dot" id="hdot"></span><span id="htext">连接中…</span></div>
+    <h1>会议转写工作台<span class="sub">asr-web · FunASR + LLM · 本地处理</span></h1>
+    <span class="pill right"><span class="dot" id="hdot"></span><span id="htext">连接中…</span></span>
+    <button class="mini" id="backBtn" hidden>← 任务列表</button>
   </header>
 
-  <!-- 1 输入 -->
-  <div class="card">
-    <h2><span class="step">1</span>输入音频</h2>
-    <div id="drop">点击选择或拖入音频文件<div class="hint" style="margin-top:4px">支持 mp3 / m4a / wav / flac / webm(ogg) · ≤512MB</div></div>
-    <input type="file" id="file" accept="audio/*,video/webm" hidden>
-    <div class="row">
-      <button id="recBtn" class="rec">● 开始录音</button>
-      <span id="recTimer" class="timer" hidden></span>
-      <input type="text" id="hotword" placeholder="热词（可选，人名/专名，空格分隔，提升识别准确率）">
+  <!-- ======== 任务列表视图 ======== -->
+  <div id="listView">
+    <div class="card">
+      <h2><span class="step">1</span>新建会议转写</h2>
+      <div id="drop">点击选择或拖入会议录音<div class="hint" style="margin-top:4px">mp3 / m4a / wav / flac / webm(ogg) · 最长 2 小时 · 仅本地处理, 不上传第三方</div></div>
+      <input type="file" id="file" accept="audio/*,video/webm" hidden>
+      <div class="row">
+        <button id="recBtn" class="danger">● 开始录音</button>
+        <span id="recTimer" class="meta" hidden></span>
+        <input type="text" id="hotword" placeholder="热词（人名/项目名/专名，空格分隔，可提升识别与校对质量）" style="flex:1;min-width:200px">
+      </div>
+      <div class="row" id="busyRow" hidden><span class="spin"></span><span id="busyText">上传中…</span>
+        <span class="hint" id="busyFile"></span></div>
     </div>
-    <div class="row" id="busyRow" hidden>
-      <span class="spin"></span><span id="busyText">转写中 0s</span>
-      <span class="hint" id="busyFile"></span>
+    <div class="card">
+      <h2><span class="step">2</span>任务列表<span class="hint">点击任务进入工作台</span></h2>
+      <table><thead><tr><th>文件</th><th class="hideS">时长</th><th class="hideS">大小</th>
+        <th>状态</th><th>时间</th><th></th></tr></thead>
+      <tbody id="taskRows"><tr><td colspan="6" class="empty">暂无任务</td></tr></tbody></table>
     </div>
   </div>
 
-  <!-- 2 原始稿 -->
-  <div class="card" id="cardRaw">
-    <h2><span class="step">2</span>转写结果
-      <span class="meta" id="rawMeta"></span>
-      <span class="tabs right" id="viewTabs" hidden>
-        <button class="on" data-v="seg">说话人分段</button><button data-v="text">纯文本</button>
-      </span>
-    </h2>
-    <div class="toolbar" id="rawTools" hidden>
-      <button id="copyRaw">复制全文</button>
-      <button id="dlTxt">下载 TXT</button>
-      <button id="dlSrt">下载 SRT</button>
-      <button class="primary right" id="toVerify" disabled>→ 送校验</button>
+  <!-- ======== 工作台视图 ======== -->
+  <div id="wbView" hidden>
+    <div id="playerBar">
+      <div class="nowTitle"><span id="wbTitle"></span><span class="meta" id="wbMeta"></span>
+        <span class="tabs right" id="segTabs">
+          <button class="on" data-v="work">校对视图</button><button data-v="raw">原始稿</button>
+        </span>
+      </div>
+      <audio id="player" controls preload="metadata"></audio>
     </div>
-    <div id="rawView"><div class="empty">尚无转写结果</div></div>
-  </div>
 
-  <!-- 3 校验 -->
-  <div class="card">
-    <h2><span class="step">3</span>LLM 校验<span class="meta" id="verMeta"></span></h2>
-    <div class="opts">
-      <label><input type="radio" name="mode" value="faithful" checked>忠实校对（只纠错，不改写）</label>
-      <label><input type="radio" name="mode" value="clean">整理润色（去口语，书面化）</label>
-      <label id="fillerWrap"><input type="checkbox" id="filler">加强语气词清理</label>
+    <div class="card">
+      <h2><span class="step">A</span>转写与人工校正
+        <span class="right" style="display:flex;gap:6px;flex-wrap:wrap">
+          <button class="mini" id="expTxt">导出 TXT</button>
+          <button class="mini" id="expSrt">导出 SRT</button>
+          <button class="mini primary" id="btnProofread">LLM 忠实校对</button>
+        </span>
+      </h2>
+      <div id="bulkBar" hidden>
+        已选 <b id="bulkN">0</b> 段
+        <select id="bulkTo"><option value="">改派到…</option></select>
+        <button class="mini" id="bulkReassign">改派</button>
+        <button class="mini" id="bulkSplit">拆分为新说话人</button>
+        <button class="mini" id="bulkClear">取消选择</button>
+      </div>
+      <div id="segList"><div class="empty">暂无片段</div></div>
     </div>
-    <div id="verView"><div class="empty">送校验后在此显示校对稿</div></div>
-    <div id="verBtnWrap" hidden>
-      <div class="row"><button id="copyVer">复制校对稿</button><button id="dlVer">下载校对稿</button>
-        <button id="diffBtn" class="right">Diff 视图</button></div>
+
+    <div class="card">
+      <h2><span class="step">B</span>说话人</h2>
+      <div id="spkList"><span class="hint">暂无</span></div>
+      <div class="hint">名字直接编辑(回车保存)；「并入」合并同一人的不同标签；勾选片段可批量改派/拆分。</div>
     </div>
-    <div id="verBusy" hidden style="margin-top:10px"><span class="spin"></span>
-      <span id="verBusyText">校验中 0s</span> <span class="hint">长稿约需数分钟</span></div>
+
+    <div class="card">
+      <h2><span class="step">C</span>AI 整理与材料
+        <span class="hint right">忠实校对 → 会议理解 → 正式材料</span></h2>
+      <div class="tabs" id="aiTabs">
+        <button class="on" data-t="understand">会议理解</button>
+        <button data-t="doc">材料生成</button>
+        <button data-t="docs">历史材料</button>
+      </div>
+      <div id="aiUnderstand" style="margin-top:12px">
+        <div class="row"><button class="primary" id="btnUnderstand">生成会议理解</button>
+          <span class="hint">提取主题/观点/分歧/决定/任务，全部可回听溯源</span></div>
+        <div id="uResult" style="margin-top:10px"><div class="empty">尚未生成</div></div>
+      </div>
+      <div id="aiDoc" style="margin-top:12px" hidden>
+        <div class="optRow">
+          <input type="text" id="docTitle" placeholder="文稿标题(可选)">
+          <input type="text" id="docAudience" placeholder="用途/面向对象(可选, 如: 向分管领导汇报)">
+          <input type="text" id="docWords" placeholder="字数(可选)" style="max-width:90px">
+          <select id="docKind">
+            <option value="minutes">会议纪要</option>
+            <option value="report">情况汇报+工作建议</option>
+            <option value="outline">主题大纲</option>
+            <option value="transcript">完整文字稿</option>
+          </select>
+          <label class="hint"><input type="checkbox" id="docNames" checked> 保留发言人</label>
+          <label class="hint"><input type="checkbox" id="docUnconf" checked> 附待确认问题</label>
+        </div>
+        <div class="row"><button class="primary" id="btnDoc">生成材料</button>
+          <button id="copyDoc" hidden>复制</button><button id="dlDoc" hidden>下载 .md</button></div>
+        <div id="docView" class="docView" style="margin-top:10px" hidden></div>
+      </div>
+      <div id="aiDocs" style="margin-top:12px" hidden><div class="empty">暂无历史材料</div></div>
+    </div>
   </div>
 </div>
 <div class="toast" id="toast"></div>
 
 <script>
 const $ = id => document.getElementById(id);
-const state = {segs:[], srt:"", raw:"", ver:"", changes:[], view:"seg", diffOn:false};
-
-/* ---------- 通用 ---------- */
-let toastT;
-function toast(msg){ const t=$("toast"); t.textContent=msg; t.style.display="block";
-  clearTimeout(toastT); toastT=setTimeout(()=>t.style.display="none",4000); }
-const fmtT = s => `${Math.floor(s/60)}分${String(Math.floor(s%60)).padStart(2,"0")}秒`;
-const mmss = ms => { const t=Math.floor(ms/1000); return `${String(Math.floor(t/60)).padStart(2,"0")}:${String(t%60).padStart(2,"0")}`; };
+const state = {tid:null, task:null, segments:[], speakers:[], selected:new Set(),
+               view:"work", understanding:null, pollT:null, nowIdx:-1};
 const SPK_COLORS=["#6a8dff","#3ecf8e","#e5b567","#c792ea","#4fc3f7","#ef6a6a","#f5a742","#7ed6a5"];
-const spkColor = spk => SPK_COLORS[(Number(spk)||0)%SPK_COLORS.length];
+const spkColor = sid => SPK_COLORS[((sid===null||sid===undefined)?8:sid)%SPK_COLORS.length];
+const spkName = sid => { const s=state.speakers.find(x=>x.speaker_id===sid);
+  return s?s.display_name:(sid===null||sid===undefined?"未知":"说话人"+(sid+1)); };
+const esc = s => String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const mmss = ms => { ms=ms||0; const t=Math.floor(ms/1000);
+  return `${String(Math.floor(t/60)).padStart(2,"0")}:${String(t%60).padStart(2,"0")}`; };
+const fmtT = s => `${Math.floor(s/60)}分${String(Math.floor(s%60)).padStart(2,"0")}秒`;
+const fmtB = b => b>=1048576?(b/1048576).toFixed(1)+"MB":Math.ceil(b/1024)+"KB";
+const stamp = () => new Date().toISOString().slice(0,19).replace(/[T:]/g,"-");
+let toastT;
+function toast(msg, ok){ const t=$("toast"); t.textContent=msg; t.className="toast"+(ok?" ok":"");
+  t.style.display="block"; clearTimeout(toastT); toastT=setTimeout(()=>t.style.display="none",5000); }
 function saveText(name, text){ const a=document.createElement("a");
   a.href=URL.createObjectURL(new Blob([text],{type:"text/plain;charset=utf-8"}));
   a.download=name; a.click(); URL.revokeObjectURL(a.href); }
-async function copyText(text){ try{ await navigator.clipboard.writeText(text); toast("已复制 ✓"); }
+async function copyText(text){ try{ await navigator.clipboard.writeText(text); toast("已复制 ✓",true); }
   catch{ toast("复制失败"); } }
-
-/* ---------- health ---------- */
-let healthOk=false;
-async function pollHealth(){ try{
-    const r=await fetch("/api/health"); const d=await r.json();
-    const dot=$("hdot"), txt=$("htext");
-    if(d.model_loaded){ dot.className="dot ok"; txt.textContent="模型就绪"; healthOk=true; }
-    else if(d.model_error){ dot.className="dot err"; txt.textContent="模型加载失败"; healthOk=false;
-      $("htext").title=d.model_error; }
-    else { dot.className="dot busy"; txt.textContent="模型加载中…"; healthOk=false; }
-  }catch{ $("hdot").className="dot err"; $("htext").textContent="服务不可达"; healthOk=false; } }
-pollHealth(); setInterval(pollHealth, 4000);
-
-/* ---------- 转写 ---------- */
-$("drop").onclick=()=>$("file").click();
-$("file").onchange=e=>{ if(e.target.files[0]) transcribeFile(e.target.files[0]); };
-["dragover","dragleave","drop"].forEach(ev=>$("drop").addEventListener(ev,e=>{
-  e.preventDefault(); $("drop").classList.toggle("over",ev==="dragover");
-  if(ev==="drop"&&e.dataTransfer.files[0]) transcribeFile(e.dataTransfer.files[0]); }));
-
-function setBusy(on, name){ $("busyRow").hidden=!on; if(on){ $("busyFile").textContent=name||"";
-    const t0=Date.now(); busyT=setInterval(()=>$("busyText").textContent=`转写中 ${fmtT((Date.now()-t0)/1000)}`,500); }
-  else clearInterval(busyT); }
-let busyT;
-
-async function transcribeFile(f){
-  if(!healthOk){ toast("模型尚未就绪或加载失败"); return; }
-  $("file").value="";
-  setBusy(true, f.name);
-  try{
-    const fd=new FormData();
-    fd.append("file", f);
-    const hw=$("hotword").value.trim(); if(hw) fd.append("hotword", hw);
-    const r=await fetch("/api/transcribe",{method:"POST",body:fd});
-    if(!r.ok){ const e=await r.json().catch(()=>({detail:r.statusText})); throw new Error(e.detail||r.statusText); }
-    const d=await r.json();
-    state.raw=d.text; state.segs=d.segments||[]; state.srt=d.srt||"";
-    $("rawMeta").textContent=`时长 ${fmtT(d.duration_sec)} · 转写 ${fmtT(d.elapsed_sec)} · ${state.segs.length||1} 段`;
-    $("viewTabs").hidden = state.segs.length===0;
-    $("rawTools").hidden=false; $("toVerify").disabled=false;
-    renderRaw();
-    $("cardRaw").scrollIntoView({behavior:"smooth"});
-  }catch(e){ toast("转写失败: "+e.message); }
-  finally{ setBusy(false); }
+async function api(path, opts={}){
+  const r = await fetch(path, opts);
+  if(r.status===401){ location.href="/login"; throw new Error("未授权"); }
+  if(!r.ok){ const e=await r.json().catch(()=>({detail:r.statusText}));
+    throw new Error(e.detail||r.statusText); }
+  return r.json();
 }
 
-/* 录音 */
+/* ---------- 健康 ---------- */
+async function pollHealth(){ try{
+    const d=await api("/api/health");
+    if(d.model_loaded){ $("hdot").className="dot ok"; $("htext").textContent="模型就绪"; }
+    else if(d.model_error){ $("hdot").className="dot err"; $("htext").textContent="模型加载失败"; $("htext").title=d.model_error; }
+    else { $("hdot").className="dot busy"; $("htext").textContent="模型加载中…"; }
+  }catch{ $("hdot").className="dot err"; $("htext").textContent="服务不可达"; } }
+pollHealth(); setInterval(pollHealth, 5000);
+
+/* ---------- 上传 ---------- */
+$("drop").onclick=()=>$("file").click();
+$("file").onchange=e=>{ if(e.target.files[0]) doUpload(e.target.files[0]); };
+["dragover","dragleave","drop"].forEach(ev=>$("drop").addEventListener(ev,e=>{
+  e.preventDefault(); $("drop").classList.toggle("over",ev==="dragover");
+  if(ev==="drop"&&e.dataTransfer.files[0]) doUpload(e.dataTransfer.files[0]); }));
+
 let rec=null, recChunks=[], recT0=0, recTimerT=null;
 $("recBtn").onclick=async()=>{
   if(rec){ rec.stop(); return; }
   try{
     const stream=await navigator.mediaDevices.getUserMedia({audio:true});
-    recChunks=[]; const mime=["audio/webm;codecs=opus","audio/webm","audio/mp4"].find(m=>MediaRecorder.isTypeSupported(m));
+    recChunks=[];
+    const mime=["audio/webm;codecs=opus","audio/webm","audio/mp4"].find(m=>MediaRecorder.isTypeSupported(m));
     rec=new MediaRecorder(stream, mime?{mimeType:mime}:{});
     rec.ondataavailable=e=>recChunks.push(e.data);
     rec.onstop=()=>{ clearInterval(recTimerT); stream.getTracks().forEach(t=>t.stop());
-      $("recBtn").textContent="● 开始录音"; $("recBtn").classList.remove("on"); $("recTimer").hidden=true;
-      const dur=(Date.now()-recT0)/1000; rec=null;
-      if(dur<1){ toast("录音太短"); return; }
-      const name=`录音-${new Date().toTimeString().slice(0,8).replaceAll(":","")}.webm`;
-      transcribeFile(new File(recChunks, name, {type:recChunks[0]?.type||"audio/webm"})); };
+      $("recBtn").textContent="● 开始录音"; $("recTimer").hidden=true; rec=null;
+      const name=`会议录音-${stamp()}.webm`;
+      doUpload(new File(recChunks, name, {type:recChunks[0]?.type||"audio/webm"})); };
     rec.start(); recT0=Date.now();
-    $("recBtn").textContent="■ 停止并转写"; $("recBtn").classList.add("on"); $("recTimer").hidden=false;
-    recTimerT=setInterval(()=>{ $("recTimer").textContent=fmtT((Date.now()-recT0)/1000); },500);
+    $("recBtn").textContent="■ 停止并上传"; $("recTimer").hidden=false;
+    recTimerT=setInterval(()=>$("recTimer").textContent=fmtT((Date.now()-recT0)/1000),500);
   }catch(e){ toast("无法访问麦克风: "+e.message); }
 };
 
-function renderRaw(){
-  const v=$("rawView");
-  if(state.view==="seg"&&state.segs.length){
-    v.innerHTML=state.segs.map(s=>{
-      const c=spkColor(s.spk);
-      return `<div class="seg" style="--spk:${c}"><span class="who">说话人 ${Number(s.spk)+1||"?"}</span>`+
-        `<span class="ts">${mmss(s.start)}–${mmss(s.end)}</span>${esc(s.text)}</div>`;
-    }).join("");
-  } else {
-    v.innerHTML=`<textarea readonly>${esc(state.raw)}</textarea>`;
-  }
-}
-$("viewTabs").onclick=e=>{ const b=e.target.closest("button"); if(!b)return;
-  [...$("viewTabs").children].forEach(x=>x.classList.toggle("on",x===b));
-  state.view=b.dataset.v; renderRaw(); };
-$("copyRaw").onclick=()=>copyText(state.raw);
-$("dlTxt").onclick=()=>saveText("转写-"+stamp()+".txt", state.raw);
-$("dlSrt").onclick=()=>state.srt?saveText("字幕-"+stamp()+".srt", state.srt):toast("无时间戳数据");
-function stamp(){ return new Date().toISOString().slice(0,19).replace(/[T:]/g,"-"); }
-function esc(s){ return String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
-
-/* ---------- 校验 ---------- */
-$("toVerify").onclick=()=>doVerify();
-document.querySelectorAll("input[name=mode]").forEach(r=>r.onchange=()=>{
-  $("fillerWrap").style.visibility = r.value==="clean"&&r.checked ? "hidden":"visible"; });
-
-let verT=null;
-async function doVerify(){
-  if(!state.raw){ toast("请先转写"); return; }
-  const mode=document.querySelector("input[name=mode]:checked").value;
-  $("verBtnWrap").hidden=true;
-  $("verView").innerHTML=`<div class="empty">校验中…</div>`;
-  $("verBusy").hidden=false;
-  const t0=Date.now(); verT=setInterval(()=>$("verBusyText").textContent=`校验中 ${fmtT((Date.now()-t0)/1000)}`,500);
+async function doUpload(f){
+  if(f.size===0){ toast("空文件"); return; }
+  $("busyRow").hidden=false; $("busyFile").textContent=f.name;
   try{
-    const r=await fetch("/api/verify",{method:"POST",
-      headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({text:state.raw, mode, cleanup_filler:$("filler").checked})});
-    if(!r.ok){ const e=await r.json().catch(()=>({detail:r.statusText})); throw new Error(e.detail||r.statusText); }
+    const fd=new FormData(); fd.append("file", f);
+    const hw=$("hotword").value.trim(); if(hw) fd.append("hotword", hw);
+    const r=await fetch("/api/tasks",{method:"POST",body:fd});
+    if(r.status===401){ location.href="/login"; return; }
+    if(!r.ok){ const e=await r.json().catch(()=>({detail:r.statusText})); throw new Error(e.detail); }
     const d=await r.json();
-    state.ver=d.corrected; state.changes=d.changes||[];
-    $("verMeta").textContent=`校验 ${fmtT(d.elapsed_sec)} · ${state.changes.length} 处修改`;
-    renderVer();
-    $("verBtnWrap").hidden=false;
-  }catch(e){ $("verView").innerHTML=`<div class="empty">校验失败: ${esc(e.message)}</div>`; }
-  finally{ clearInterval(verT); $("verBusy").hidden=true; }
+    toast(d.deduplicated?"已存在相同任务, 已复用":"上传完成, 已加入队列", true);
+    loadTasks(); openTask(d.task_id);
+  }catch(e){ toast("上传失败: "+e.message); }
+  finally{ $("busyRow").hidden=true; $("file").value=""; }
 }
 
-function diffSentences(a,b){
-  const sa=a.split(/(?<=[。！？；!?;\n])/).filter(Boolean), sb=b.split(/(?<=[。！？；!?;\n])/).filter(Boolean);
-  const n=sa.length,m=sb.length, dp=Array.from({length:n+1},()=>new Uint16Array(m+1));
-  for(let i=n-1;i>=0;i--)for(let j=m-1;j>=0;j--)
-    dp[i][j]=sa[i]===sb[j]?dp[i+1][j+1]+1:Math.max(dp[i+1][j],dp[i][j+1]);
-  const out=[]; let i=0,j=0;
-  while(i<n&&j<m){
-    if(sa[i]===sb[j]){ out.push(["=",sa[i]]); i++; j++; }
-    else if(dp[i+1][j]>=dp[i][j+1]){ out.push(["-",sa[i]]); i++; }
-    else { out.push(["+",sb[j]]); j++; }
+/* ---------- 任务列表 ---------- */
+const ST_TXT={queued:"排队中",processing:"处理中",done:"完成",failed:"失败",cancelled:"已取消"};
+async function loadTasks(){
+  try{
+    const tasks=await api("/api/tasks");
+    const tb=$("taskRows");
+    if(!tasks.length){ tb.innerHTML='<tr><td colspan="6" class="empty">暂无任务</td></tr>'; return; }
+    tb.innerHTML=tasks.map(t=>{
+      const active=t.status==="queued"||t.status==="processing";
+      return `<tr class="click" data-id="${t.id}">
+        <td>${esc(t.filename)}<div class="hint">${esc(t.error||"")}</div></td>
+        <td class="hideS meta">${t.duration_sec?fmtT(t.duration_sec):"—"}</td>
+        <td class="hideS meta">${fmtB(t.size_bytes||0)}</td>
+        <td><span class="st ${t.status}">${ST_TXT[t.status]||t.status}${active?"…":""}</span></td>
+        <td class="meta">${new Date(t.created_at*1000).toLocaleString("zh-CN",{hour12:false})}</td>
+        <td>${active?`<button class="mini" data-act="cancel" data-id="${t.id}">取消</button>`:""}
+            ${t.status==="failed"?`<button class="mini" data-act="retry" data-id="${t.id}">重试</button>`:""}
+            <button class="mini danger" data-act="del" data-id="${t.id}">删除</button></td></tr>`;
+    }).join("");
+    const hasActive=tasks.some(t=>t.status==="queued"||t.status==="processing");
+    if(hasActive&&!state.pollT) state.pollT=setInterval(()=>{ if(!state.tid) loadTasks(); },2500);
+    if(!hasActive&&state.pollT){ clearInterval(state.pollT); state.pollT=null; }
+  }catch(e){}
+}
+$("taskRows").onclick=async e=>{
+  const act=e.target.dataset.act, id=e.target.dataset.id;
+  if(act==="cancel"){ await api(`/api/tasks/${id}/cancel`,{method:"POST"}); loadTasks(); return; }
+  if(act==="retry"){ try{ await api(`/api/tasks/${id}/retry`,{method:"POST"}); loadTasks(); }
+    catch(err){ toast(err.message); } return; }
+  if(act==="del"){ await api(`/api/tasks/${id}/delete`,{method:"POST"}); loadTasks(); return; }
+  const tr=e.target.closest("tr.click"); if(tr) openTask(tr.dataset.id);
+};
+
+/* ---------- 工作台 ---------- */
+$("backBtn").onclick=()=>{ state.tid=null; $("wbView").hidden=true; $("listView").hidden=false;
+  $("backBtn").hidden=true; $("player").pause(); loadTasks(); };
+
+async function openTask(tid){
+  state.tid=tid; state.selected.clear(); updateBulk();
+  $("listView").hidden=true; $("wbView").hidden=false; $("backBtn").hidden=false;
+  await reloadTask();
+  if(state.task.audio_path) $("player").src=`/api/tasks/${tid}/audio`;
+  window.scrollTo({top:0});
+}
+async function reloadTask(){
+  const d=await api(`/api/tasks/${state.tid}/segments`);
+  state.task=d.task; state.segments=d.segments; state.speakers=d.speakers;
+  $("wbTitle").textContent=state.task.filename;
+  $("wbMeta").textContent=`${state.task.duration_sec?fmtT(state.task.duration_sec):""} · ${ST_TXT[state.task.status]||state.task.status}`;
+  renderSpeakers(); renderSegments();
+  const t=state.task;
+  if(t.status!=="done"&&!reloadTask._p){
+    reloadTask._p=setInterval(async()=>{ if(!state.tid)return;
+      const tt=await api(`/api/tasks/${state.tid}`);
+      if(tt.status==="done"){ clearInterval(reloadTask._p); reloadTask._p=null; await reloadTask();
+        $("player").src=`/api/tasks/${state.tid}/audio`; }
+      else $("wbMeta").textContent=`${ST_TXT[tt.status]||tt.status}… ${tt.error||""}`;
+    },2000);
   }
-  while(i<n)out.push(["-",sa[i++]]); while(j<m)out.push(["+",sb[j++]]);
-  return out;
+  if(t.status==="done"&&reloadTask._p){ clearInterval(reloadTask._p); reloadTask._p=null; }
 }
 
-function renderVer(){
-  const charsOk = (state.raw.length+state.ver.length)<=9000;
-  const v=$("verView");
-  if(state.diffOn){
-    if(charsOk){
-      const a=state.raw,b=state.ver;
-      const n=a.length,m=b.length,dp=Array.from({length:n+1},()=>new Uint16Array(m+1));
-      for(let i=n-1;i>=0;i--)for(let j=m-1;j>=0;j--)
-        dp[i][j]=a[i]===b[j]?dp[i+1][j+1]+1:Math.max(dp[i+1][j],dp[i][j+1]);
-      let html="",i=0,j=0,bufA="",bufB="";
-      const flush=()=>{ if(bufA)html+=`<del>${esc(bufA)}</del>`,bufA="";
-                        if(bufB)html+=`<ins>${esc(bufB)}</ins>`,bufB=""; };
-      while(i<n&&j<m){
-        if(a[i]===b[j]){ flush(); html+=esc(a[i]); i++; j++; }
-        else if(dp[i+1][j]>=dp[i][j+1]){ bufA+=a[i++]; }
-        else { bufB+=b[j++]; }
-      }
-      while(i<n)bufA+=a[i++]; while(j<m)bufB+=b[j++]; flush();
-      v.innerHTML=`<div class="diff" style="white-space:pre-wrap;font-size:13.5px;line-height:1.9">${html}</div>`;
-    } else {
-      const rows=diffSentences(state.raw,state.ver);
-      v.innerHTML=`<div class="diff" style="white-space:pre-wrap;font-size:13.5px;line-height:1.9">`+
-        rows.map(([t,s])=>t==="="?esc(s):t==="-"?`<del>${esc(s)}</del>`:`<ins>${esc(s)}</ins>`).join("")+`</div>`;
-    }
-  } else {
-    const chips=state.changes.map(c=>
-      `<span class="chip"><del>${esc(c.from)}</del><ins>${esc(c.to)}</ins><span class="why">${esc(c.reason||"")}</span></span>`).join("");
-    v.innerHTML=(chips?`<div class="chg">${chips}</div>`:"")+
-      `<textarea readonly>${esc(state.ver)}</textarea>`;
-  }
+/* 说话人卡 */
+function renderSpeakers(){
+  const ids=[...new Set(state.segments.map(s=>s.speaker_id))].sort((a,b)=>(a??99)-(b??99));
+  $("spkList").innerHTML=ids.map(sid=>{
+    const c=spkColor(sid);
+    const others=ids.filter(x=>x!==sid);
+    return `<span class="spkChip" style="--spk:${c}"><span class="c"></span>
+      <input data-sid="${sid===null?"null":sid}" value="${esc(sid===null?"未知":spkName(sid))}" title="点击改名, 回车保存">
+      ${sid===null?"":`<select data-merge="${sid}"><option value="">并入…</option>
+        ${others.map(o=>`<option value="${o}">${esc(spkName(o))}</option>`).join("")}</select>`}
+    </span>`;
+  }).join("")||'<span class="hint">暂无</span>';
+  $("bulkTo").innerHTML='<option value="">改派到…</option>'+ids.filter(x=>x!==null).map(o=>
+    `<option value="${o}">${esc(spkName(o))}</option>`).join("");
 }
-$("diffBtn").onclick=()=>{ state.diffOn=!state.diffOn;
-  $("diffBtn").textContent=state.diffOn?"文稿视图":"Diff 视图"; renderVer(); };
-$("copyVer").onclick=()=>copyText(state.ver);
-$("dlVer").onclick=()=>saveText("校对-"+stamp()+".txt", state.ver);
+$("spkList").addEventListener("change",async e=>{
+  const m=e.target.dataset.merge;
+  if(m!==undefined&&e.target.value!==""){
+    await api(`/api/tasks/${state.tid}/speakers/merge`,{method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({from:[Number(m)],to:Number(e.target.value)})});
+    toast("已合并说话人",true); await reloadTask();
+  }
+});
+$("spkList").addEventListener("keydown",async e=>{
+  if(e.target.dataset.sid===undefined||e.key!=="Enter")return;
+  const sid=e.target.dataset.sid; const name=e.target.value.trim();
+  if(!name)return;
+  if(sid==="null"){ toast("未知说话人请先在片段里改派到具体标签"); return; }
+  await api(`/api/tasks/${state.tid}/speakers/${sid}/rename`,{method:"POST",
+    headers:{"Content-Type":"application/json"},body:JSON.stringify({display_name:name})});
+  toast("已改名",true); await reloadTask();
+});
+
+/* 片段列表 */
+function renderSegments(){
+  const v=$("segList");
+  if(!state.segments.length){ v.innerHTML='<div class="empty">暂无片段</div>'; return; }
+  const ids=[...new Set(state.segments.map(x=>x.speaker_id))].sort((a,b)=>(a??99)-(b??99));
+  v.innerHTML=state.segments.map(s=>{
+    const sid=s.speaker_id, c=spkColor(sid);
+    const showRaw = state.view==="raw" || s.corrected_text===null;
+    const text = showRaw ? s.raw_text : s.corrected_text;
+    const rawHtml = (s.corrected_text!==null && state.view==="work" && s.corrected_text!==s.raw_text)
+      ? ` <span class="raw hint">${esc(s.raw_text)}</span>` : "";
+    return `<div class="seg" id="seg-${s.id}" style="--spk:${c}">
+      <input type="checkbox" data-sel="${s.id}">
+      <span class="who"><select data-spk="${s.id}">
+        ${ids.map(o=>`<option value="${o===null?"":o}" ${o===sid?"selected":""}>${esc(o===null?"未知":spkName(o))}</option>`).join("")}
+      </select></span>
+      ${s.start_ms!==null&&s.start_ms!==undefined
+        ?`<a class="ts" data-ts="${s.start_ms}">${mmss(s.start_ms)}</a>`:""}
+      <div class="txt" data-edit="${s.id}">${esc(text)}${rawHtml}</div>
+      <span class="acts"><button class="mini" data-edit-btn="${s.id}">✎</button></span>
+    </div>`;
+  }).join("");
+}
+$("segTabs").onclick=e=>{ const b=e.target.closest("button"); if(!b)return;
+  [...$("segTabs").children].forEach(x=>x.classList.toggle("on",x===b));
+  state.view=b.dataset.v; renderSegments(); };
+
+/* 播放联动 */
+$("player").addEventListener("timeupdate",()=>{
+  const ms=$("player").currentTime*1000;
+  const idx=state.segments.findIndex(s=>s.start_ms!=null&&s.start_ms<=ms&&ms<=Math.max(s.end_ms||0,s.start_ms+5000));
+  if(idx!==state.nowIdx){
+    state.nowIdx=idx;
+    document.querySelectorAll(".seg.now").forEach(x=>x.classList.remove("now"));
+    if(idx>=0){ const el=$(`seg-${state.segments[idx].id}`);
+      el.classList.add("now");
+      el.scrollIntoView({block:"nearest",behavior:"smooth"}); }
+  }
+});
+function seekTo(ms){ if(ms==null)return; $("player").currentTime=ms/1000; $("player").play(); }
+$("segList").addEventListener("click",e=>{
+  const ts=e.target.closest(".ts"); if(ts){ seekTo(Number(ts.dataset.ts)); return; }
+  const eb=e.target.closest("[data-edit-btn]"); if(eb){ startEdit(Number(eb.dataset.editBtn)); return; }
+  const ed=e.target.closest("[data-edit]"); if(ed && e.target===ed) startEdit(Number(ed.dataset.edit));
+  const sel=e.target.closest("input[data-sel]"); if(sel){
+    sel.checked?state.selected.add(Number(sel.dataset.sel)):state.selected.delete(Number(sel.dataset.sel));
+    updateBulk(); }
+});
+function startEdit(id){
+  const s=state.segments.find(x=>x.id===id); if(!s)return;
+  const el=document.querySelector(`#seg-${id} .txt`); if(!el)return;
+  const cur=s.corrected_text!==null?s.corrected_text:s.raw_text;
+  el.innerHTML=`<textarea>${esc(cur)}</textarea>
+    <div class="row" style="margin-top:6px"><button class="mini primary" data-save="${id}">保存</button>
+    <button class="mini" data-cancel="1">取消</button>
+    <span class="hint">原文: ${esc(s.raw_text)}</span></div>`;
+  el.querySelector("textarea").focus();
+}
+$("segList").addEventListener("keydown",e=>{
+  if(e.target.tagName==="textarea"&&e.key==="Enter"&&(e.metaKey||e.ctrlKey)){
+    const holder=e.target.closest(".txt"); const btn=holder.querySelector("[data-save]");
+    if(btn) saveEdit(Number(btn.dataset.save));
+  }
+  if(e.key==="Escape") renderSegments();
+});
+$("segList").addEventListener("click",async e=>{
+  if(e.target.dataset.save!==undefined) saveEdit(Number(e.target.dataset.save));
+  if(e.target.dataset.cancel!==undefined) renderSegments();
+});
+async function saveEdit(id){
+  const el=document.querySelector(`#seg-${id} .txt textarea`);
+  if(!el)return;
+  await api(`/api/segments/${id}`,{method:"PATCH",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({task_id:state.tid,text:el.value})});
+  toast("已保存",true); await reloadTask();
+}
+/* 片段说话人下拉 */
+$("segList").addEventListener("change",async e=>{
+  const sid=e.target.dataset.spk; if(sid===undefined)return;
+  const v=e.target.value;
+  await api(`/api/segments/${sid}`,{method:"PATCH",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({task_id:state.tid,speaker_id:v===""?null:Number(v)})});
+  await reloadTask();
+});
+/* 批量 */
+function updateBulk(){ $("bulkBar").hidden=state.selected.size===0;
+  $("bulkN").textContent=state.selected.size; }
+$("bulkClear").onclick=()=>{ state.selected.clear(); renderSegments(); updateBulk(); };
+$("bulkReassign").onclick=async()=>{
+  if(!$("bulkTo").value){ toast("请选择目标说话人"); return; }
+  await api(`/api/tasks/${state.tid}/segments/reassign`,{method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({segment_ids:[...state.selected],to_speaker:Number($("bulkTo").value)})});
+  state.selected.clear(); toast("已改派",true); await reloadTask(); updateBulk();
+};
+$("bulkSplit").onclick=async()=>{
+  await api(`/api/tasks/${state.tid}/speakers/split`,{method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({segment_ids:[...state.selected]})});
+  state.selected.clear(); toast("已拆分为新说话人",true); await reloadTask(); updateBulk();
+};
+
+/* 导出 */
+function segText(s){ return (state.view==="work"&&s.corrected_text!==null)?s.corrected_text:s.raw_text; }
+$("expTxt").onclick=()=>saveText(`转写-${stamp()}.txt`,
+  state.segments.map(s=>`[${mmss(s.start_ms)}] ${spkName(s.speaker_id)}：${segText(s)}`).join("\n"));
+$("expSrt").onclick=()=>{
+  let out=[];
+  for(const s of state.segments){
+    if(s.start_ms==null)continue;
+    const c=out[out.length-1];
+    if(c&&c.spk===s.speaker_id&&s.end_ms-c.start<=8000&&c.text.length+segText(s).length<=60){
+      c.end=s.end_ms; c.text+=segText(s);
+    } else out.push({start:s.start_ms,end:s.end_ms,spk:s.speaker_id,text:segText(s)});
+  }
+  const fmt=ms=>{ms=Math.max(0,ms);const h=Math.floor(ms/3600000),m=Math.floor(ms/60000)%60,
+    sec=Math.floor(ms/1000)%60,mss=ms%1000;
+    return `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}:${String(sec).padStart(2,"0")},${String(mss).padStart(3,"0")}`;};
+  saveText(`字幕-${stamp()}.srt`,
+    out.map((c,n)=>`${n+1}\n${fmt(c.start)} --> ${fmt(c.end)}\n${c.text}\n`).join("\n"));
+};
+
+/* ---------- AI: 忠实校对 ---------- */
+$("btnProofread").onclick=async e=>{
+  const b=e.target; b.disabled=true; b.innerHTML='<span class="spin"></span> 校对中';
+  try{
+    const d=await api(`/api/tasks/${state.tid}/proofread`,{method:"POST"});
+    await reloadTask();
+    if(d.stats.missing_ids?.length||d.stats.failed_batches)
+      toast(`校对完成, ${d.stats.missing_ids.length} 段未覆盖(可重试)`);
+    else toast(`校对完成: ${d.corrected_count} 段`,true);
+  }catch(err){ toast("校对失败: "+err.message); }
+  finally{ b.disabled=false; b.textContent="LLM 忠实校对"; }
+};
+
+/* ---------- AI: 会议理解 ---------- */
+$("btnUnderstand").onclick=async e=>{
+  const b=e.target; b.disabled=true; b.innerHTML='<span class="spin"></span> 理解中';
+  try{
+    const d=await api(`/api/tasks/${state.tid}/understand`,{method:"POST"});
+    state.understanding=d.understanding; renderUnderstanding(d.understanding);
+    toast("会议理解已生成",true);
+  }catch(err){ toast("生成失败: "+err.message); }
+  finally{ b.disabled=false; b.textContent="生成会议理解"; }
+};
+function refChips(ids){ return (ids||[]).map(i=>`<a class="ref" data-seek="${i}">#${i}</a>`).join(""); }
+$("uResult").addEventListener("click",e=>{
+  const r=e.target.closest("[data-seek]"); if(!r)return;
+  const s=state.segments.find(x=>x.idx===Number(r.dataset.seek));
+  if(s) seekTo(s.start_ms);
+});
+function uItem(item,fields){
+  return `<div class="uItem">${refChips(item.segment_ids)}${fields}</div>`;
+}
+function renderUnderstanding(u){
+  if(!u){ $("uResult").innerHTML='<div class="empty">尚未生成</div>'; return; }
+  const sec=(title,items,fmt)=>items.length?`<div class="uSec"><h3>${title} (${items.length})</h3>
+    ${items.map(fmt).join("")}</div>`:"";
+  $("uResult").innerHTML=`
+    <div class="uTitle">${esc(u.topic||"未识别会议主题")}</div>
+    ${sec("讨论事项",u.discussion||[],i=>uItem(i,`<b>${esc(i.title)}</b> ${esc(i.summary||"")}`))}
+    ${sec("各方观点",u.viewpoints||[],i=>uItem(i,`<b>${esc(i.speaker)}</b>：${esc(i.point||"")}`))}
+    ${sec("分歧",u.disagreements||[],i=>uItem(i,`<b>${esc(i.issue)}</b> ${esc(i.side_a||"")} vs ${esc(i.side_b||"")}${i.resolved?"":"<span class='tag'>未解决</span>"}`))}
+    ${sec("会议决定",u.decisions||[],i=>uItem(i,`<b>${esc(i.decision)}</b>${i.owner?" · 责任人 "+esc(i.owner):""}${i.deadline?" · "+esc(i.deadline):""}`))}
+    ${sec("建议(未表决)",u.suggestions||[],i=>uItem(i,`${esc(i.content)} · <b>${esc(i.proposer||"")}</b><span class="tag">建议≠通过</span>`))}
+    ${sec("待办任务",u.tasks||[],i=>uItem(i,`<b>${esc(i.content)}</b>${i.owner?" · "+esc(i.owner):""}${i.deadline?" · "+esc(i.deadline):""}`))}
+    ${sec("待确认",u.unconfirmed||[],i=>uItem(i,`${esc(i.content)}<span class="tag">待确认</span>`))}`;
+}
+
+/* ---------- AI: 材料 ---------- */
+$("aiTabs").onclick=e=>{ const b=e.target.closest("button"); if(!b)return;
+  [...$("aiTabs").children].forEach(x=>x.classList.toggle("on",x===b));
+  ["understand","doc","docs"].forEach(t=>$("ai"+t.charAt(0).toUpperCase()+t.slice(1)).hidden=t!==b.dataset.t);
+  if(b.dataset.t==="docs") loadDocs();
+};
+$("btnDoc").onclick=async e=>{
+  const b=e.target; b.disabled=true; b.innerHTML='<span class="spin"></span> 生成中';
+  try{
+    const d=await api(`/api/tasks/${state.tid}/documents`,{method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({kind:$("docKind").value,options:{
+        title:$("docTitle").value.trim()||null, audience:$("docAudience").value.trim()||null,
+        word_count:Number($("docWords").value)||null,
+        include_names:$("docNames").checked, include_unconfirmed:$("docUnconf").checked}})});
+    showDoc(d.content);
+    toast("材料已生成",true);
+  }catch(err){ toast("生成失败: "+err.message); }
+  finally{ b.disabled=false; b.textContent="生成材料"; }
+};
+function showDoc(content){ $("docView").hidden=false; $("docView").textContent=content;
+  $("copyDoc").hidden=false; $("dlDoc").hidden=false;
+  $("copyDoc").onclick=()=>copyText(content);
+  $("dlDoc").onclick=()=>saveText(`${$("docKind").selectedOptions[0].textContent}-${stamp()}.md`,content); }
+async function loadDocs(){
+  try{
+    const docs=await api(`/api/tasks/${state.tid}/documents`);
+    const names={understanding:"会议理解",transcript:"完整文字稿",outline:"主题大纲",
+      minutes:"会议纪要",report:"情况汇报"};
+    $("aiDocs").innerHTML=docs.length?docs.map(d=>
+      `<div class="uItem"><b>${names[d.kind]||d.kind}</b>
+        <span class="meta">${new Date(d.created_at*1000).toLocaleString("zh-CN",{hour12:false})}</span>
+        <div class="row"><button class="mini" data-doc="${d.id}">查看</button></div></div>`).join("")
+      :'<div class="empty">暂无历史材料</div>';
+  }catch{}
+}
+$("aiDocs").addEventListener("click",async e=>{
+  const b=e.target.closest("[data-doc]"); if(!b)return;
+  const docs=await api(`/api/tasks/${state.tid}/documents`);
+  const d=docs.find(x=>x.id===Number(b.dataset.doc));
+  if(d){ if(d.kind==="understanding") renderUnderstanding(JSON.parse(d.content));
+    else showDoc(d.content); window.scrollTo({top:document.body.scrollHeight,behavior:"smooth"}); }
+});
+
+/* 启动 */
+loadTasks();
 </script>
 </body>
 </html>
