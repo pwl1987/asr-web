@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>语音转写工作台 · asr-web</title>
+<style>
+  :root{
+    --bg:#0e1013; --card:#15181d; --card2:#1a1e25; --line:rgba(255,255,255,.08);
+    --text:#e8eaf0; --muted:#8b92a3; --accent:#6a8dff; --accent2:#9b6aff;
+    --ok:#3ecf8e; --warn:#e5b567; --err:#ef6a6a;
+    --mono:"SF Mono",ui-monospace,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  [hidden]{display:none !important}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font:14px/1.7 -apple-system,"PingFang SC","Noto Sans SC","Microsoft YaHei",sans-serif;}
+  .wrap{max-width:880px;margin:0 auto;padding:28px 20px 80px}
+  header{display:flex;align-items:center;justify-content:space-between;margin-bottom:22px}
+  h1{font-size:19px;margin:0;font-weight:650;letter-spacing:.5px}
+  h1 .sub{color:var(--muted);font-weight:400;font-size:12px;margin-left:10px;letter-spacing:0}
+  .pill{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--muted);
+    background:var(--card);border:1px solid var(--line);border-radius:999px;padding:5px 13px}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--muted)}
+  .dot.ok{background:var(--ok);box-shadow:0 0 8px var(--ok)}
+  .dot.err{background:var(--err);box-shadow:0 0 8px var(--err)}
+  .dot.busy{background:var(--warn);animation:pulse 1.2s infinite}
+  @keyframes pulse{50%{opacity:.35}}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;
+    padding:18px;margin-bottom:18px}
+  .card h2{font-size:13px;margin:0 0 14px;color:var(--muted);font-weight:600;
+    letter-spacing:1px;display:flex;align-items:center;gap:8px}
+  .step{width:20px;height:20px;border-radius:6px;background:var(--card2);
+    display:inline-flex;align-items:center;justify-content:center;font-size:11px;color:var(--accent)}
+  /* 上传区 */
+  #drop{border:1.5px dashed rgba(255,255,255,.18);border-radius:12px;padding:30px 16px;
+    text-align:center;cursor:pointer;transition:.2s;color:var(--muted)}
+  #drop:hover,#drop.over{border-color:var(--accent);background:rgba(106,141,255,.06);color:var(--text)}
+  #drop b{color:var(--text);font-weight:600}
+  .row{display:flex;gap:10px;margin-top:12px;flex-wrap:wrap;align-items:center}
+  button{background:var(--card2);border:1px solid var(--line);color:var(--text);
+    border-radius:9px;padding:8px 16px;font-size:13px;cursor:pointer;transition:.15s}
+  button:hover:not(:disabled){border-color:var(--accent);color:var(--accent)}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  button.primary{background:linear-gradient(135deg,var(--accent),var(--accent2));border:none;
+    color:#fff;font-weight:600;padding:9px 22px}
+  button.primary:hover:not(:disabled){filter:brightness(1.12);color:#fff}
+  button.rec{color:var(--err);border-color:rgba(239,106,106,.4)}
+  button.rec.on{background:rgba(239,106,106,.15);animation:pulse 1.2s infinite}
+  input[type=text]{background:var(--card2);border:1px solid var(--line);color:var(--text);
+    border-radius:9px;padding:8px 12px;font-size:13px;flex:1;min-width:180px;outline:none}
+  input[type=text]:focus{border-color:var(--accent)}
+  .hint{font-size:12px;color:var(--muted)}
+  .timer{font-family:var(--mono);font-size:12px;color:var(--warn)}
+  /* 文本区 */
+  .toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;align-items:center}
+  .tabs{display:flex;background:var(--card2);border-radius:9px;padding:3px;border:1px solid var(--line)}
+  .tabs button{border:none;background:none;padding:5px 14px;border-radius:7px;font-size:12px;color:var(--muted)}
+  .tabs button.on{background:var(--accent);color:#fff}
+  textarea{width:100%;min-height:160px;background:var(--card2);border:1px solid var(--line);
+    color:var(--text);border-radius:10px;padding:12px;font-size:13.5px;line-height:1.8;
+    resize:vertical;outline:none;font-family:inherit}
+  textarea:focus{border-color:var(--accent)}
+  .seg{padding:8px 12px;border-radius:9px;margin-bottom:8px;background:var(--card2);
+    border-left:3px solid var(--spk,#6a8dff)}
+  .seg .who{font-size:11px;color:var(--spk,#6a8dff);font-weight:700;margin-right:8px}
+  .seg .ts{font-size:11px;color:var(--muted);font-family:var(--mono);margin-right:10px}
+  .empty{color:var(--muted);text-align:center;padding:26px;font-size:13px}
+  /* 校验区 */
+  .opts{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:14px;font-size:13px;color:var(--muted)}
+  .opts label{display:inline-flex;align-items:center;gap:6px;cursor:pointer}
+  .opts input{accent-color:var(--accent)}
+  .chg{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}
+  .chip{background:var(--card2);border:1px solid var(--line);border-radius:8px;
+    padding:5px 10px;font-size:12px;max-width:100%}
+  .chip del{color:var(--err);text-decoration:line-through;margin-right:6px}
+  .chip ins{color:var(--ok);text-decoration:none;margin-right:6px}
+  .chip .why{color:var(--muted)}
+  .diff ins{background:rgba(62,207,142,.18);color:var(--ok);text-decoration:none;border-radius:3px;padding:0 2px}
+  .diff del{background:rgba(239,106,106,.16);color:var(--err);text-decoration:line-through;border-radius:3px;padding:0 2px}
+  .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#2a1e22;
+    color:var(--err);border:1px solid rgba(239,106,106,.4);padding:10px 18px;border-radius:10px;
+    font-size:13px;display:none;z-index:9;max-width:80vw}
+  .spin{display:inline-block;width:13px;height:13px;border:2px solid var(--line);
+    border-top-color:var(--accent);border-radius:50%;animation:rot .8s linear infinite;vertical-align:-2px}
+  @keyframes rot{to{transform:rotate(360deg)}}
+  .meta{font-size:12px;color:var(--muted);font-family:var(--mono)}
+  .right{margin-left:auto}
+  #verifyBtnWrap{margin-top:4px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>语音转写工作台<span class="sub">FunASR Paraformer · GPU2 :8466</span></h1>
+    <div class="pill"><span class="dot" id="hdot"></span><span id="htext">连接中…</span></div>
+  </header>
+
+  <!-- 1 输入 -->
+  <div class="card">
+    <h2><span class="step">1</span>输入音频</h2>
+    <div id="drop">点击选择或拖入音频文件<div class="hint" style="margin-top:4px">支持 mp3 / m4a / wav / flac / webm(ogg) · ≤512MB</div></div>
+    <input type="file" id="file" accept="audio/*,video/webm" hidden>
+    <div class="row">
+      <button id="recBtn" class="rec">● 开始录音</button>
+      <span id="recTimer" class="timer" hidden></span>
+      <input type="text" id="hotword" placeholder="热词（可选，人名/专名，空格分隔，提升识别准确率）">
+    </div>
+    <div class="row" id="busyRow" hidden>
+      <span class="spin"></span><span id="busyText">转写中 0s</span>
+      <span class="hint" id="busyFile"></span>
+    </div>
+  </div>
+
+  <!-- 2 原始稿 -->
+  <div class="card" id="cardRaw">
+    <h2><span class="step">2</span>转写结果
+      <span class="meta" id="rawMeta"></span>
+      <span class="tabs right" id="viewTabs" hidden>
+        <button class="on" data-v="seg">说话人分段</button><button data-v="text">纯文本</button>
+      </span>
+    </h2>
+    <div class="toolbar" id="rawTools" hidden>
+      <button id="copyRaw">复制全文</button>
+      <button id="dlTxt">下载 TXT</button>
+      <button id="dlSrt">下载 SRT</button>
+      <button class="primary right" id="toVerify" disabled>→ 送校验</button>
+    </div>
+    <div id="rawView"><div class="empty">尚无转写结果</div></div>
+  </div>
+
+  <!-- 3 校验 -->
+  <div class="card">
+    <h2><span class="step">3</span>LLM 校验<span class="meta" id="verMeta"></span></h2>
+    <div class="opts">
+      <label><input type="radio" name="mode" value="faithful" checked>忠实校对（只纠错，不改写）</label>
+      <label><input type="radio" name="mode" value="clean">整理润色（去口语，书面化）</label>
+      <label id="fillerWrap"><input type="checkbox" id="filler">加强语气词清理</label>
+    </div>
+    <div id="verView"><div class="empty">送校验后在此显示校对稿</div></div>
+    <div id="verBtnWrap" hidden>
+      <div class="row"><button id="copyVer">复制校对稿</button><button id="dlVer">下载校对稿</button>
+        <button id="diffBtn" class="right">Diff 视图</button></div>
+    </div>
+    <div id="verBusy" hidden style="margin-top:10px"><span class="spin"></span>
+      <span id="verBusyText">校验中 0s</span> <span class="hint">长稿约需数分钟</span></div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const state = {segs:[], srt:"", raw:"", ver:"", changes:[], view:"seg", diffOn:false};
+
+/* ---------- 通用 ---------- */
+let toastT;
+function toast(msg){ const t=$("toast"); t.textContent=msg; t.style.display="block";
+  clearTimeout(toastT); toastT=setTimeout(()=>t.style.display="none",4000); }
+const fmtT = s => `${Math.floor(s/60)}分${String(Math.floor(s%60)).padStart(2,"0")}秒`;
+const mmss = ms => { const t=Math.floor(ms/1000); return `${String(Math.floor(t/60)).padStart(2,"0")}:${String(t%60).padStart(2,"0")}`; };
+const SPK_COLORS=["#6a8dff","#3ecf8e","#e5b567","#c792ea","#4fc3f7","#ef6a6a","#f5a742","#7ed6a5"];
+const spkColor = spk => SPK_COLORS[(Number(spk)||0)%SPK_COLORS.length];
+function saveText(name, text){ const a=document.createElement("a");
+  a.href=URL.createObjectURL(new Blob([text],{type:"text/plain;charset=utf-8"}));
+  a.download=name; a.click(); URL.revokeObjectURL(a.href); }
+async function copyText(text){ try{ await navigator.clipboard.writeText(text); toast("已复制 ✓"); }
+  catch{ toast("复制失败"); } }
+
+/* ---------- health ---------- */
+let healthOk=false;
+async function pollHealth(){ try{
+    const r=await fetch("/api/health"); const d=await r.json();
+    const dot=$("hdot"), txt=$("htext");
+    if(d.model_loaded){ dot.className="dot ok"; txt.textContent="模型就绪"; healthOk=true; }
+    else if(d.model_error){ dot.className="dot err"; txt.textContent="模型加载失败"; healthOk=false;
+      $("htext").title=d.model_error; }
+    else { dot.className="dot busy"; txt.textContent="模型加载中…"; healthOk=false; }
+  }catch{ $("hdot").className="dot err"; $("htext").textContent="服务不可达"; healthOk=false; } }
+pollHealth(); setInterval(pollHealth, 4000);
+
+/* ---------- 转写 ---------- */
+$("drop").onclick=()=>$("file").click();
+$("file").onchange=e=>{ if(e.target.files[0]) transcribeFile(e.target.files[0]); };
+["dragover","dragleave","drop"].forEach(ev=>$("drop").addEventListener(ev,e=>{
+  e.preventDefault(); $("drop").classList.toggle("over",ev==="dragover");
+  if(ev==="drop"&&e.dataTransfer.files[0]) transcribeFile(e.dataTransfer.files[0]); }));
+
+function setBusy(on, name){ $("busyRow").hidden=!on; if(on){ $("busyFile").textContent=name||"";
+    const t0=Date.now(); busyT=setInterval(()=>$("busyText").textContent=`转写中 ${fmtT((Date.now()-t0)/1000)}`,500); }
+  else clearInterval(busyT); }
+let busyT;
+
+async function transcribeFile(f){
+  if(!healthOk){ toast("模型尚未就绪或加载失败"); return; }
+  $("file").value="";
+  setBusy(true, f.name);
+  try{
+    const fd=new FormData();
+    fd.append("file", f);
+    const hw=$("hotword").value.trim(); if(hw) fd.append("hotword", hw);
+    const r=await fetch("/api/transcribe",{method:"POST",body:fd});
+    if(!r.ok){ const e=await r.json().catch(()=>({detail:r.statusText})); throw new Error(e.detail||r.statusText); }
+    const d=await r.json();
+    state.raw=d.text; state.segs=d.segments||[]; state.srt=d.srt||"";
+    $("rawMeta").textContent=`时长 ${fmtT(d.duration_sec)} · 转写 ${fmtT(d.elapsed_sec)} · ${state.segs.length||1} 段`;
+    $("viewTabs").hidden = state.segs.length===0;
+    $("rawTools").hidden=false; $("toVerify").disabled=false;
+    renderRaw();
+    $("cardRaw").scrollIntoView({behavior:"smooth"});
+  }catch(e){ toast("转写失败: "+e.message); }
+  finally{ setBusy(false); }
+}
+
+/* 录音 */
+let rec=null, recChunks=[], recT0=0, recTimerT=null;
+$("recBtn").onclick=async()=>{
+  if(rec){ rec.stop(); return; }
+  try{
+    const stream=await navigator.mediaDevices.getUserMedia({audio:true});
+    recChunks=[]; const mime=["audio/webm;codecs=opus","audio/webm","audio/mp4"].find(m=>MediaRecorder.isTypeSupported(m));
+    rec=new MediaRecorder(stream, mime?{mimeType:mime}:{});
+    rec.ondataavailable=e=>recChunks.push(e.data);
+    rec.onstop=()=>{ clearInterval(recTimerT); stream.getTracks().forEach(t=>t.stop());
+      $("recBtn").textContent="● 开始录音"; $("recBtn").classList.remove("on"); $("recTimer").hidden=true;
+      const dur=(Date.now()-recT0)/1000; rec=null;
+      if(dur<1){ toast("录音太短"); return; }
+      const name=`录音-${new Date().toTimeString().slice(0,8).replaceAll(":","")}.webm`;
+      transcribeFile(new File(recChunks, name, {type:recChunks[0]?.type||"audio/webm"})); };
+    rec.start(); recT0=Date.now();
+    $("recBtn").textContent="■ 停止并转写"; $("recBtn").classList.add("on"); $("recTimer").hidden=false;
+    recTimerT=setInterval(()=>{ $("recTimer").textContent=fmtT((Date.now()-recT0)/1000); },500);
+  }catch(e){ toast("无法访问麦克风: "+e.message); }
+};
+
+function renderRaw(){
+  const v=$("rawView");
+  if(state.view==="seg"&&state.segs.length){
+    v.innerHTML=state.segs.map(s=>{
+      const c=spkColor(s.spk);
+      return `<div class="seg" style="--spk:${c}"><span class="who">说话人 ${Number(s.spk)+1||"?"}</span>`+
+        `<span class="ts">${mmss(s.start)}–${mmss(s.end)}</span>${esc(s.text)}</div>`;
+    }).join("");
+  } else {
+    v.innerHTML=`<textarea readonly>${esc(state.raw)}</textarea>`;
+  }
+}
+$("viewTabs").onclick=e=>{ const b=e.target.closest("button"); if(!b)return;
+  [...$("viewTabs").children].forEach(x=>x.classList.toggle("on",x===b));
+  state.view=b.dataset.v; renderRaw(); };
+$("copyRaw").onclick=()=>copyText(state.raw);
+$("dlTxt").onclick=()=>saveText("转写-"+stamp()+".txt", state.raw);
+$("dlSrt").onclick=()=>state.srt?saveText("字幕-"+stamp()+".srt", state.srt):toast("无时间戳数据");
+function stamp(){ return new Date().toISOString().slice(0,19).replace(/[T:]/g,"-"); }
+function esc(s){ return String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
+
+/* ---------- 校验 ---------- */
+$("toVerify").onclick=()=>doVerify();
+document.querySelectorAll("input[name=mode]").forEach(r=>r.onchange=()=>{
+  $("fillerWrap").style.visibility = r.value==="clean"&&r.checked ? "hidden":"visible"; });
+
+let verT=null;
+async function doVerify(){
+  if(!state.raw){ toast("请先转写"); return; }
+  const mode=document.querySelector("input[name=mode]:checked").value;
+  $("verBtnWrap").hidden=true;
+  $("verView").innerHTML=`<div class="empty">校验中…</div>`;
+  $("verBusy").hidden=false;
+  const t0=Date.now(); verT=setInterval(()=>$("verBusyText").textContent=`校验中 ${fmtT((Date.now()-t0)/1000)}`,500);
+  try{
+    const r=await fetch("/api/verify",{method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({text:state.raw, mode, cleanup_filler:$("filler").checked})});
+    if(!r.ok){ const e=await r.json().catch(()=>({detail:r.statusText})); throw new Error(e.detail||r.statusText); }
+    const d=await r.json();
+    state.ver=d.corrected; state.changes=d.changes||[];
+    $("verMeta").textContent=`校验 ${fmtT(d.elapsed_sec)} · ${state.changes.length} 处修改`;
+    renderVer();
+    $("verBtnWrap").hidden=false;
+  }catch(e){ $("verView").innerHTML=`<div class="empty">校验失败: ${esc(e.message)}</div>`; }
+  finally{ clearInterval(verT); $("verBusy").hidden=true; }
+}
+
+function diffSentences(a,b){
+  const sa=a.split(/(?<=[。！？；!?;\n])/).filter(Boolean), sb=b.split(/(?<=[。！？；!?;\n])/).filter(Boolean);
+  const n=sa.length,m=sb.length, dp=Array.from({length:n+1},()=>new Uint16Array(m+1));
+  for(let i=n-1;i>=0;i--)for(let j=m-1;j>=0;j--)
+    dp[i][j]=sa[i]===sb[j]?dp[i+1][j+1]+1:Math.max(dp[i+1][j],dp[i][j+1]);
+  const out=[]; let i=0,j=0;
+  while(i<n&&j<m){
+    if(sa[i]===sb[j]){ out.push(["=",sa[i]]); i++; j++; }
+    else if(dp[i+1][j]>=dp[i][j+1]){ out.push(["-",sa[i]]); i++; }
+    else { out.push(["+",sb[j]]); j++; }
+  }
+  while(i<n)out.push(["-",sa[i++]]); while(j<m)out.push(["+",sb[j++]]);
+  return out;
+}
+
+function renderVer(){
+  const charsOk = (state.raw.length+state.ver.length)<=9000;
+  const v=$("verView");
+  if(state.diffOn){
+    if(charsOk){
+      const a=state.raw,b=state.ver;
+      const n=a.length,m=b.length,dp=Array.from({length:n+1},()=>new Uint16Array(m+1));
+      for(let i=n-1;i>=0;i--)for(let j=m-1;j>=0;j--)
+        dp[i][j]=a[i]===b[j]?dp[i+1][j+1]+1:Math.max(dp[i+1][j],dp[i][j+1]);
+      let html="",i=0,j=0,bufA="",bufB="";
+      const flush=()=>{ if(bufA)html+=`<del>${esc(bufA)}</del>`,bufA="";
+                        if(bufB)html+=`<ins>${esc(bufB)}</ins>`,bufB=""; };
+      while(i<n&&j<m){
+        if(a[i]===b[j]){ flush(); html+=esc(a[i]); i++; j++; }
+        else if(dp[i+1][j]>=dp[i][j+1]){ bufA+=a[i++]; }
+        else { bufB+=b[j++]; }
+      }
+      while(i<n)bufA+=a[i++]; while(j<m)bufB+=b[j++]; flush();
+      v.innerHTML=`<div class="diff" style="white-space:pre-wrap;font-size:13.5px;line-height:1.9">${html}</div>`;
+    } else {
+      const rows=diffSentences(state.raw,state.ver);
+      v.innerHTML=`<div class="diff" style="white-space:pre-wrap;font-size:13.5px;line-height:1.9">`+
+        rows.map(([t,s])=>t==="="?esc(s):t==="-"?`<del>${esc(s)}</del>`:`<ins>${esc(s)}</ins>`).join("")+`</div>`;
+    }
+  } else {
+    const chips=state.changes.map(c=>
+      `<span class="chip"><del>${esc(c.from)}</del><ins>${esc(c.to)}</ins><span class="why">${esc(c.reason||"")}</span></span>`).join("");
+    v.innerHTML=(chips?`<div class="chg">${chips}</div>`:"")+
+      `<textarea readonly>${esc(state.ver)}</textarea>`;
+  }
+}
+$("diffBtn").onclick=()=>{ state.diffOn=!state.diffOn;
+  $("diffBtn").textContent=state.diffOn?"文稿视图":"Diff 视图"; renderVer(); };
+$("copyVer").onclick=()=>copyText(state.ver);
+$("dlVer").onclick=()=>saveText("校对-"+stamp()+".txt", state.ver);
+</script>
+</body>
+</html>

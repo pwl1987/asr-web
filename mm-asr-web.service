@@ -1,0 +1,15 @@
+[Unit]
+Description=mm-gw-02 asr-web: FunASR Paraformer ASR + LLM verify (:8466, GPU2)
+After=network.target
+
+[Service]
+Environment=CUDA_VISIBLE_DEVICES=2
+EnvironmentFile=/data/mm-gw-02/asr-web/asr.env
+WorkingDirectory=/data/mm-gw-02/asr-web
+ExecStart=/data/tools/funasr-env/bin/uvicorn app:app --host 0.0.0.0 --port 8466
+Restart=on-failure
+RestartSec=5
+MemoryMax=14G
+
+[Install]
+WantedBy=default.target
