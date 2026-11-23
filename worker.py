@@ -74,6 +74,18 @@ class Worker:
                 self.store.update_task(tid, status="cancelled", stage="done",
                                        duration_sec=duration)
                 return
+            # 服务刚启动时模型可能仍在加载: 等待而不是让任务直接失败
+            if not pipeline.asr_ready():
+                waited = 0
+                while waited < config.MODEL_WAIT_SEC:
+                    if pipeline.asr_error():
+                        raise RuntimeError(f"ASR 模型加载失败: {pipeline.asr_error()}")
+                    if pipeline.asr_ready():
+                        break
+                    await asyncio.sleep(2)
+                    waited += 2
+                if not pipeline.asr_ready():
+                    raise RuntimeError("ASR 模型未就绪(等待超时)")
             self.store.update_task(tid, stage="asr", duration_sec=duration)
             async with self.asr_sem:
                 segments = await asyncio.to_thread(
@@ -85,6 +97,9 @@ class Worker:
                 self.store.upsert_speaker(tid, spk, f"说话人{spk + 1}")
             self.store.update_task(tid, status="done", stage="done",
                                    audio_path=str(audio_path))
+            # 成功后原始上传不再需要(重试/回放都用 16k wav), 避免长期双份占盘
+            if not config.KEEP_UPLOAD:
+                (Path(config.UPLOAD_DIR) / f"{tid}.bin").unlink(missing_ok=True)
         except ValueError as e:  # 解码类明确错误
             self.store.update_task(tid, status="failed", error=str(e), stage="done")
         except Exception as e:  # noqa: BLE001

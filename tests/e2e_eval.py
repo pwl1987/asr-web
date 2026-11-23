@@ -35,6 +35,21 @@ def api(method: str, path: str, data=None, files=None, timeout=1200, hotword=Non
         return json.loads(r.read())
 
 
+def start_job(path: str, body=None) -> str:
+    return api("POST", path, data=body or {})["job_id"]
+
+
+def wait_job(jid: str) -> dict:
+    deadline = time.time() + 1800
+    while time.time() < deadline:
+        j = api("GET", f"/api/jobs/{jid}")
+        if j["status"] in ("done", "failed", "cancelled"):
+            assert j["status"] == "done", j
+            return j
+        time.sleep(2)
+    raise TimeoutError(jid)
+
+
 def cer(ref: str, hyp: str) -> float:
     """字级 CER(去标点空白后)。"""
     import re
@@ -80,8 +95,8 @@ raw_cer = cer(ref_text, hyp_text)
 n_spk = len({s["speaker_id"] for s in segs if s["speaker_id"] is not None})
 print(f"[asr] segments={len(segs)} speakers_detected={n_spk} (真实 {ref_speakers}) RAW_CER={raw_cer:.4f}")
 
-# 校对
-p = api("POST", f"/api/tasks/{tid}/proofread")
+# 校对(后台 job)
+p = wait_job(start_job(f"/api/tasks/{tid}/proofread"))["result"]
 print(f"[proofread] corrected={p['corrected_count']} missing={p['stats']['missing_ids']} "
       f"failed_batches={p['stats']['failed_batches']}")
 d2 = api("GET", f"/api/tasks/{tid}/segments")
@@ -89,8 +104,10 @@ corr_text = "".join(s["corrected_text"] or s["raw_text"] for s in d2["segments"]
 corr_cer = cer(ref_text, corr_text)
 print(f"[proofread] CORR_CER={corr_cer:.4f} (raw {raw_cer:.4f})")
 
-# 理解
-u = api("POST", f"/api/tasks/{tid}/understand")["understanding"]
+# 理解(后台 job) → 取最新 understanding 文档
+j = wait_job(start_job(f"/api/tasks/{tid}/understand"))
+docs = api("GET", f"/api/tasks/{tid}/documents?kind=understanding")
+u = json.loads(docs[0]["content"])
 print(f"[understand] topic={u['topic']}")
 print(f"  decisions={len(u['decisions'])} tasks={len(u['tasks'])} "
       f"disagreements={len(u['disagreements'])} unconfirmed={len(u['unconfirmed'])}")
@@ -99,10 +116,10 @@ for x in u["decisions"]:
 for x in u["tasks"]:
     print(f"    待办: {x['content']} owner={x['owner']} deadline={x['deadline']} refs={x['segment_ids']}")
 
-# 纪要
-doc = api("POST", f"/api/tasks/{tid}/documents",
-          data={"kind": "minutes", "options": {"title": "项目例会纪要",
-                                               "include_names": True}})
+# 纪要(后台 job)
+doc = wait_job(start_job(f"/api/tasks/{tid}/documents",
+                         {"kind": "minutes", "options": {"title": "项目例会纪要",
+                                                         "include_names": True}}))["result"]
 print(f"[minutes] {len(doc['content'])} chars")
 total_elapsed = time.time() - t0
 print(f"[total] wall={total_elapsed:.1f}s (音频 {t['duration_sec']}s, 实时率 {t['duration_sec']/total_elapsed:.1f}x)")

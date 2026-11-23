@@ -109,6 +109,9 @@
   .toast.ok{background:#16241d;color:var(--ok);border-color:rgba(62,207,142,.4)}
   #bulkBar{background:rgba(106,141,255,.1);border:1px solid rgba(106,141,255,.3);
     border-radius:10px;padding:8px 12px;margin-bottom:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  #jobBar{background:rgba(106,141,255,.1);border:1px solid rgba(106,141,255,.3);
+    border-radius:10px;padding:8px 12px;margin-bottom:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  #jobBar .hint{color:#aab6d8}
   .empty{color:var(--muted);text-align:center;padding:22px;font-size:13px}
   @media (max-width:640px){
     .seg{flex-wrap:wrap}
@@ -156,6 +159,12 @@
         </span>
       </div>
       <audio id="player" controls preload="metadata"></audio>
+    </div>
+    <div id="jobBar" hidden>
+      <span class="spin" id="jobSpin"></span><span id="jobText"></span>
+      <span class="hint" id="jobHint"></span>
+      <button class="mini" id="jobCancel" hidden>取消</button>
+      <button class="mini primary" id="jobMissing" hidden>补缺</button>
     </div>
 
     <div class="card">
@@ -222,7 +231,8 @@
 <script>
 const $ = id => document.getElementById(id);
 const state = {tid:null, task:null, segments:[], speakers:[], selected:new Set(),
-               view:"work", understanding:null, pollT:null, nowIdx:-1};
+               view:"work", understanding:null, pollT:null, nowIdx:-1,
+               watchT:null, job:null};
 const SPK_COLORS=["#6a8dff","#3ecf8e","#e5b567","#c792ea","#4fc3f7","#ef6a6a","#f5a742","#7ed6a5"];
 const spkColor = sid => SPK_COLORS[((sid===null||sid===undefined)?8:sid)%SPK_COLORS.length];
 const spkName = sid => { const s=state.speakers.find(x=>x.speaker_id===sid);
@@ -329,12 +339,16 @@ $("taskRows").onclick=async e=>{
   if(act==="cancel"){ await api(`/api/tasks/${id}/cancel`,{method:"POST"}); loadTasks(); return; }
   if(act==="retry"){ try{ await api(`/api/tasks/${id}/retry`,{method:"POST"}); loadTasks(); }
     catch(err){ toast(err.message); } return; }
-  if(act==="del"){ await api(`/api/tasks/${id}/delete`,{method:"POST"}); loadTasks(); return; }
+  if(act==="del"){ try{ await api(`/api/tasks/${id}/delete`,{method:"POST"}); loadTasks(); }
+    catch(err){ toast(err.message); } return; }
   const tr=e.target.closest("tr.click"); if(tr) openTask(tr.dataset.id);
 };
 
 /* ---------- 工作台 ---------- */
-$("backBtn").onclick=()=>{ state.tid=null; $("wbView").hidden=true; $("listView").hidden=false;
+$("backBtn").onclick=()=>{ state.tid=null; state.job=null;
+  if(state.watchT){ clearInterval(state.watchT); state.watchT=null; }
+  if(reloadTask._p){ clearInterval(reloadTask._p); reloadTask._p=null; }
+  $("jobBar").hidden=true; $("wbView").hidden=true; $("listView").hidden=false;
   $("backBtn").hidden=true; $("player").pause(); loadTasks(); };
 
 async function openTask(tid){
@@ -342,6 +356,7 @@ async function openTask(tid){
   $("listView").hidden=true; $("wbView").hidden=false; $("backBtn").hidden=false;
   await reloadTask();
   if(state.task.audio_path) $("player").src=`/api/tasks/${tid}/audio`;
+  await resumeJob();
   window.scrollTo({top:0});
 }
 async function reloadTask(){
@@ -520,28 +535,103 @@ $("expSrt").onclick=()=>{
     out.map((c,n)=>`${n+1}\n${fmt(c.start)} --> ${fmt(c.end)}\n${c.text}\n`).join("\n"));
 };
 
+/* ---------- AI 后台任务: 进度 / 取消 / 补缺 ---------- */
+const JOB_LABEL={proofread:"LLM 校对",understand:"会议理解",document:"材料生成"};
+function jobBarShow(text, busy, missing){
+  $("jobBar").hidden=false; $("jobText").textContent=text;
+  $("jobSpin").hidden=!busy; $("jobCancel").hidden=!busy;
+  $("jobMissing").hidden=!missing;
+}
+async function startJob(path, body){
+  const d=await api(path,{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify(body||{})});
+  watchJob(d.job_id);
+  return d;
+}
+async function watchJob(jid){
+  if(state.watchT){ clearInterval(state.watchT); state.watchT=null; }
+  state.job=jid;
+  const tick=async()=>{
+    let j; try{ j=await api(`/api/jobs/${jid}`); }catch(e){ return true; }
+    const label=JOB_LABEL[j.kind]||j.kind;
+    if(j.status==="queued"||j.status==="running"){
+      jobBarShow(`${label}中… ${j.detail||""}`.trim(), true, false);
+      return false;
+    }
+    if(state.watchT){ clearInterval(state.watchT); state.watchT=null; }
+    state.job=null; $("jobSpin").hidden=true; $("jobCancel").hidden=true;
+    if(j.status==="done"){ await afterJob(j); return true; }
+    if(j.status==="cancelled"){
+      const extra=j.detail&&!j.detail.includes("已取消")?` ${j.detail}`:"";
+      jobBarShow(`${label}已取消${extra}`,false,false);
+      toast(`${label}已取消`); await reloadTask(); return true;
+    }
+    jobBarShow(`${label}失败: ${j.error||""}`,false,false);
+    toast(`${label}失败: ${j.error||""}`); return true;
+  };
+  if(!(await tick())) state.watchT=setInterval(async()=>{ await tick(); },1500);
+}
+async function afterJob(j){
+  if(j.kind==="proofread"){
+    const r=j.result||{}; await reloadTask();
+    const miss=r.remaining_missing||0, fails=(r.stats||{}).failed_batches||0;
+    jobBarShow(`校对完成: ${r.corrected_count||0} 段`+
+      (miss?`，${miss} 段未覆盖`:"")+(fails?`（${fails} 批失败）`:""), false, miss>0);
+    $("jobMissing").textContent=`补缺 ${miss} 段`;
+    toast(`校对完成: ${r.corrected_count||0} 段`, true);
+  } else if(j.kind==="understand"){
+    const docs=await api(`/api/tasks/${state.tid}/documents?kind=understanding`);
+    if(docs.length){ state.understanding=JSON.parse(docs[0].content);
+      renderUnderstanding(state.understanding); }
+    const fail=(j.result||{}).failed_chunks||0;
+    $("jobBar").hidden=true;
+    if(fail) toast(`会议理解部分完成: ${fail} 段分析失败, 可重试`);
+    else toast("会议理解已生成", true);
+  } else if(j.kind==="document"){
+    const r=j.result||{}; if(r.content) showDoc(r.content);
+    if(!$("aiDocs").hidden) loadDocs();
+    $("jobBar").hidden=true; toast("材料已生成", true);
+  }
+}
+async function resumeJob(){
+  try{
+    const jobs=await api(`/api/tasks/${state.tid}/jobs?active=1`);
+    if(jobs.length){ watchJob(jobs[0].id); return; }
+    // 上次校对若有未覆盖段, 保留"补缺"入口(刷新后不丢)
+    const last=await api(`/api/tasks/${state.tid}/jobs?kind=proofread&limit=1`);
+    if(last.length && last[0].status==="done"){
+      const miss=(last[0].result||{}).remaining_missing||0;
+      if(miss>0){
+        jobBarShow(`上次校对还有 ${miss} 段未覆盖`, false, true);
+        $("jobMissing").textContent=`补缺 ${miss} 段`;
+      }
+    }
+  }catch(e){}
+}
+$("jobCancel").onclick=async()=>{
+  if(!state.job) return;
+  try{ await api(`/api/jobs/${state.job}/cancel`,{method:"POST"}); toast("取消已请求"); }
+  catch(e){ toast(e.message); }
+};
+$("jobMissing").onclick=async()=>{
+  try{ await startJob(`/api/tasks/${state.tid}/proofread`,{only_missing:true}); }
+  catch(e){ toast("启动失败: "+e.message); }
+};
+
 /* ---------- AI: 忠实校对 ---------- */
 $("btnProofread").onclick=async e=>{
-  const b=e.target; b.disabled=true; b.innerHTML='<span class="spin"></span> 校对中';
-  try{
-    const d=await api(`/api/tasks/${state.tid}/proofread`,{method:"POST"});
-    await reloadTask();
-    if(d.stats.missing_ids?.length||d.stats.failed_batches)
-      toast(`校对完成, ${d.stats.missing_ids.length} 段未覆盖(可重试)`);
-    else toast(`校对完成: ${d.corrected_count} 段`,true);
-  }catch(err){ toast("校对失败: "+err.message); }
-  finally{ b.disabled=false; b.textContent="LLM 忠实校对"; }
+  const b=e.target; b.disabled=true;
+  try{ await startJob(`/api/tasks/${state.tid}/proofread`,{}); }
+  catch(err){ toast("校对启动失败: "+err.message); }
+  finally{ b.disabled=false; }
 };
 
 /* ---------- AI: 会议理解 ---------- */
 $("btnUnderstand").onclick=async e=>{
-  const b=e.target; b.disabled=true; b.innerHTML='<span class="spin"></span> 理解中';
-  try{
-    const d=await api(`/api/tasks/${state.tid}/understand`,{method:"POST"});
-    state.understanding=d.understanding; renderUnderstanding(d.understanding);
-    toast("会议理解已生成",true);
-  }catch(err){ toast("生成失败: "+err.message); }
-  finally{ b.disabled=false; b.textContent="生成会议理解"; }
+  const b=e.target; b.disabled=true;
+  try{ await startJob(`/api/tasks/${state.tid}/understand`,{}); }
+  catch(err){ toast("生成失败: "+err.message); }
+  finally{ b.disabled=false; }
 };
 function refChips(ids){ return (ids||[]).map(i=>`<a class="ref" data-seek="${i}">#${i}</a>`).join(""); }
 $("uResult").addEventListener("click",e=>{
@@ -574,18 +664,14 @@ $("aiTabs").onclick=e=>{ const b=e.target.closest("button"); if(!b)return;
   if(b.dataset.t==="docs") loadDocs();
 };
 $("btnDoc").onclick=async e=>{
-  const b=e.target; b.disabled=true; b.innerHTML='<span class="spin"></span> 生成中';
+  const b=e.target; b.disabled=true;
   try{
-    const d=await api(`/api/tasks/${state.tid}/documents`,{method:"POST",
-      headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({kind:$("docKind").value,options:{
-        title:$("docTitle").value.trim()||null, audience:$("docAudience").value.trim()||null,
-        word_count:Number($("docWords").value)||null,
-        include_names:$("docNames").checked, include_unconfirmed:$("docUnconf").checked}})});
-    showDoc(d.content);
-    toast("材料已生成",true);
+    await startJob(`/api/tasks/${state.tid}/documents`,{kind:$("docKind").value,options:{
+      title:$("docTitle").value.trim()||null, audience:$("docAudience").value.trim()||null,
+      word_count:Number($("docWords").value)||null,
+      include_names:$("docNames").checked, include_unconfirmed:$("docUnconf").checked}});
   }catch(err){ toast("生成失败: "+err.message); }
-  finally{ b.disabled=false; b.textContent="生成材料"; }
+  finally{ b.disabled=false; }
 };
 function showDoc(content){ $("docView").hidden=false; $("docView").textContent=content;
   $("copyDoc").hidden=false; $("dlDoc").hidden=false;

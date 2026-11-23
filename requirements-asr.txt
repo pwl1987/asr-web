@@ -1,0 +1,6 @@
+# ASR 引擎依赖。torch/torchaudio 请按服务器 CUDA 版本选择对应 wheel 安装。
+torch>=2.3
+torchaudio>=2.3
+numpy>=1.26,<2
+funasr>=1.2
+modelscope>=1.20

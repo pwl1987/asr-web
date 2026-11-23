@@ -3,13 +3,20 @@
 ASR 引擎适配: transcribe_wav() 是唯一入口, 返回 [{idx,start_ms,end_ms,speaker_id,raw_text}]。
 未来换 MOSS-Transcribe 等引擎只需替换此函数内部实现, 上层不感知。
 
-LLM: llm_chat() 统一处理 OpenAI 兼容接口; 显式区分 HTTP 失败/空内容/截断,
-截断对成文类任务支持续写。所有结构化输出经 validate 后才入库。
+LLM: llm_chat() 统一处理 OpenAI 兼容接口(全局限流 + 网络重试); 显式区分
+HTTP 失败/空内容/截断。校对按批并行、逐批回填、支持取消与补缺; 理解按字
+数分块并合并, 单次输出截断时自动二分重试; 成文截断自动续写。
+所有结构化输出经 validate 后才入库。
 """
+import hashlib
 import json
 import re
 import subprocess
+import threading
+import time
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from urllib.error import HTTPError, URLError
 
 import config
 
@@ -119,8 +126,15 @@ class LLMEmpty(LLMError):
     pass
 
 
+class Cancelled(Exception):
+    """AI 任务被用户取消(协作式, 只在安全点抛出)。"""
+
+
+_llm_gate = threading.BoundedSemaphore(max(1, config.LLM_CONCURRENCY))
+
+
 def llm_chat(messages: list[dict], max_tokens: int) -> tuple[str, str]:
-    """返回 (content, finish_reason)。空内容/HTTP 失败抛 LLMError 系。"""
+    """返回 (content, finish_reason)。网络错误重试一次; 空内容/结构异常抛 LLMError 系。"""
     body = {
         "model": config.LLM_MODEL, "messages": messages,
         "temperature": 0.1, "max_tokens": max_tokens, "stream": False,
@@ -132,14 +146,32 @@ def llm_chat(messages: list[dict], max_tokens: int) -> tuple[str, str]:
         data=json.dumps(body, ensure_ascii=False).encode(), method="POST",
         headers={"Authorization": f"Bearer {config.LLM_API_KEY}",
                  "Content-Type": "application/json"})
+    data = None
+    for attempt in range(2):
+        try:
+            with _llm_gate:
+                with urllib.request.urlopen(req, timeout=config.LLM_TIMEOUT) as resp:
+                    data = json.loads(resp.read())
+            break
+        except HTTPError as e:
+            if 500 <= e.code < 600 and attempt == 0:
+                time.sleep(1.0)
+                continue
+            detail = e.read().decode(errors="replace")[:300] if e.fp else ""
+            raise LLMError(f"LLM HTTP {e.code}: {detail or e.reason}") from e
+        except (URLError, TimeoutError, ConnectionError) as e:
+            if attempt == 0:
+                time.sleep(1.0)
+                continue
+            raise LLMError(f"LLM 调用失败: {type(e).__name__}: {e}") from e
+        except Exception as e:  # noqa: BLE001
+            raise LLMError(f"LLM 调用失败: {type(e).__name__}: {e}") from e
     try:
-        with urllib.request.urlopen(req, timeout=config.LLM_TIMEOUT) as resp:
-            data = json.loads(resp.read())
-    except Exception as e:  # noqa: BLE001
-        raise LLMError(f"LLM 调用失败: {type(e).__name__}: {e}") from e
-    choice = data["choices"][0]
-    content = choice["message"].get("content") or ""
-    finish = choice.get("finish_reason") or ""
+        choice = data["choices"][0]
+        content = choice["message"].get("content") or ""
+        finish = choice.get("finish_reason") or ""
+    except (KeyError, IndexError, TypeError) as e:
+        raise LLMError("LLM 响应结构异常(缺少 choices/message)") from e
     if not content.strip():
         raise LLMEmpty("LLM 返回空 content(thinking 未关闭或输出为空)")
     return content, finish
@@ -154,7 +186,10 @@ def extract_json(s: str) -> dict:
     a, b = s.find("{"), s.rfind("}")
     if a < 0 or b <= a:
         raise LLMError("LLM 输出中未找到 JSON 对象")
-    return json.loads(s[a:b + 1])
+    try:
+        return json.loads(s[a:b + 1])
+    except json.JSONDecodeError as e:
+        raise LLMError(f"LLM 输出 JSON 非法: {e.msg} (位置 {e.pos})") from e
 
 
 def _seg_line(s: dict) -> str:
@@ -176,36 +211,37 @@ _SYS_PROOFREAD = (
 )
 
 
-def proofread_segments(segments: list[dict], hotword: str = "") -> tuple[dict, dict]:
-    """分批忠实校对。返回 ({idx: corrected_text}, stats)。
-    stats: {"batches", "missing_ids", "failed_batches"}"""
-    by_idx = {s["idx"]: s for s in segments}
+def _make_batches(segments: list[dict], max_chars: int) -> list[list[dict]]:
     batches: list[list[dict]] = []
     cur: list[dict] = []
     n_chars = 0
     for s in segments:
         cur.append(s)
         n_chars += len(s.get("raw_text") or "")
-        if n_chars >= config.STAGE_A_BATCH_CHARS:
+        if n_chars >= max_chars:
             batches.append(cur)
             cur, n_chars = [], 0
     if cur:
         batches.append(cur)
+    return batches
 
-    out: dict[int, str] = {}
-    missing: list[int] = []
-    failed_batches = 0
-    for bi, batch in enumerate(batches):
-        ids = [s["idx"] for s in batch]
-        ctx = f"（上文仅供理解：{_seg_line(batches[bi-1][-1])}）\n" if bi > 0 and batches[bi - 1] else ""
-        hw = f"\n热词(专名写法以此为准): {hotword}" if hotword else ""
-        user = (f"{ctx}以下 {len(batch)} 条转写片段来自同一段录音，请逐条校对：\n\n"
-                + "\n".join(_seg_line(s) for s in batch) + hw)
-        got = {}
-        for attempt in (1, 2):  # 缺段重试一次
+
+def _proofread_batch(batch: list[dict], prev_line: str, hotword: str) -> tuple[dict, list[int]]:
+    """单批校对: 缺段重试; 网络/JSON 异常重试; 返回 ({idx:text}, 仍未覆盖 ids)。"""
+    ids = [s["idx"] for s in batch]
+    ctx = f"（上文仅供理解：{prev_line}）\n" if prev_line else ""
+    hw = f"\n热词(专名写法以此为准): {hotword}" if hotword else ""
+    base_user = (f"{ctx}以下 {len(batch)} 条转写片段来自同一段录音，请逐条校对：\n\n"
+                 + "\n".join(_seg_line(s) for s in batch) + hw)
+    prompt = base_user
+    got: dict[int, str] = {}
+    missing: list[int] = ids
+    last_err: Exception | None = None
+    for attempt in range(3):
+        try:
             content, _ = llm_chat(
                 [{"role": "system", "content": _SYS_PROOFREAD},
-                 {"role": "user", "content": user}], max_tokens=8000)
+                 {"role": "user", "content": prompt}], max_tokens=8000)
             data = extract_json(content)
             items = data.get("items")
             if not isinstance(items, list):
@@ -213,17 +249,94 @@ def proofread_segments(segments: list[dict], hotword: str = "") -> tuple[dict, d
             for it in items:
                 if isinstance(it, dict) and it.get("id") in ids and isinstance(it.get("text"), str):
                     got[it["id"]] = it["text"].strip()
-            miss = [i for i in ids if i not in got]
-            if not miss:
+        except LLMError as e:
+            last_err = e
+            if not got:
+                continue
+        missing = [i for i in ids if i not in got]
+        if not missing:
+            return got, []
+        prompt = (f"上一次输出漏掉了 id={missing}，请只补齐这些 id 的校对结果。"
+                  f"仍输出严格 JSON {{\"items\":[...]}}。\n\n" + base_user)
+    if last_err is not None and not got:
+        raise last_err
+    return got, missing
+
+
+def proofread_segments(segments: list[dict], hotword: str = "", *,
+                       progress=None, cancel=None, only_missing: bool = False,
+                       force_human: bool = False, on_result=None) -> tuple[dict, dict]:
+    """分批忠实校对(批间并行)。返回 ({idx: corrected_text}, stats)。
+
+    - 默认跳过 corrected_by='human' 的片段, 绝不覆盖人工修改(force_human=True 才覆盖)
+    - only_missing=True 只处理尚未校对的片段(增量补缺)
+    - on_result({idx:text}) 在每批完成时回调, 供上层立即落库(部分失败/取消不丢)
+    """
+    pool: list[dict] = []
+    skipped_human = 0
+    skipped_done = 0
+    for s in segments:
+        if s.get("corrected_by") == "human" and not force_human:
+            skipped_human += 1
+            continue
+        if only_missing and s.get("corrected_text") is not None:
+            skipped_done += 1
+            continue
+        pool.append(s)
+    batches = _make_batches(pool, config.STAGE_A_BATCH_CHARS)
+    total = len(batches)
+    out: dict[int, str] = {}
+    missing: list[int] = []
+    failed_batches = 0
+    partial_batches = 0
+    errors: list[str] = []
+    cancelled = False
+    done = 0
+    if not batches:
+        return out, {"batches": 0, "failed_batches": 0, "partial_batches": 0,
+                     "missing_ids": [], "skipped_human": skipped_human,
+                     "skipped_done": skipped_done, "cancelled": False, "errors": []}
+
+    workers = max(1, min(int(config.PROOFREAD_WORKERS or 1), total))
+    ex = ThreadPoolExecutor(max_workers=workers)
+    future_map = {}
+    for bi, batch in enumerate(batches):
+        prev_line = _seg_line(batches[bi - 1][-1]) if bi > 0 else ""
+        future_map[ex.submit(_proofread_batch, batch, prev_line, hotword)] = batch
+    try:
+        for fut in as_completed(future_map):
+            done += 1
+            try:
+                got, miss = fut.result()
+            except Exception as e:  # noqa: BLE001 单批失败不拖垮整轮
+                failed_batches += 1
+                errors.append(f"{type(e).__name__}: {e}"[:200])
+                got, miss = {}, [s["idx"] for s in future_map[fut]]
+            if got:
+                out.update(got)
+                if on_result:
+                    on_result(got)
+            if miss:
+                missing.extend(miss)
+                if got:
+                    partial_batches += 1
+            if progress:
+                progress(done, total)
+            if cancel and cancel():  # 先把已完成批次落库, 再停(部分结果不丢)
+                cancelled = True
                 break
-            missing = miss
-            if attempt == 1:
-                user = (f"上一次输出漏掉了 id={miss}，请只补齐这些 id 的校对结果。"
-                        f"仍输出严格 JSON {{\"items\":[...]}}。\n\n" + user)
-        out.update(got)
-        if len(got) < len(ids):
-            failed_batches += 1
-    stats = {"batches": len(batches), "missing_ids": missing, "failed_batches": failed_batches}
+    finally:
+        for f in future_map:
+            f.cancel()
+        # 取消时不等待在途批次, 只丢弃其结果
+        ex.shutdown(wait=not cancelled, cancel_futures=True)
+
+    stats = {
+        "batches": total, "failed_batches": failed_batches,
+        "partial_batches": partial_batches, "missing_ids": sorted(set(missing)),
+        "skipped_human": skipped_human, "skipped_done": skipped_done,
+        "cancelled": cancelled, "errors": errors,
+    }
     return out, stats
 
 
@@ -243,41 +356,29 @@ _SYS_UNDERSTAND = (
     ' "unconfirmed": [{"content","segment_ids":[]}]}, 数组允许为空。'
 )
 
-_VALID_KEYS = {"topic", "discussion", "viewpoints", "disagreements",
-               "decisions", "suggestions", "tasks", "unconfirmed"}
+_LIST_KEYS = ["discussion", "viewpoints", "disagreements", "decisions",
+              "suggestions", "tasks", "unconfirmed"]
+
+_MERGE_FIELDS = {
+    "discussion": ("title", "summary"),
+    "viewpoints": ("speaker", "point"),
+    "disagreements": ("issue", "side_a", "side_b"),
+    "decisions": ("decision", "owner"),
+    "suggestions": ("content", "proposer"),
+    "tasks": ("content", "owner"),
+    "unconfirmed": ("content",),
+}
 
 
-def understand_meeting(segments: list[dict], speaker_names: dict[int, str]) -> dict:
-    """输入已校对片段(有 corrected 用 corrected, 否则 raw)。返回结构化理解(校验后)。"""
-    def name_of(sid) -> str:
-        return speaker_names.get(sid, f"说话人{sid + 1}") if sid is not None else "未知说话人"
-
-    lines = []
-    for s in segments:
-        text = (s.get("corrected_text") or s.get("raw_text") or "").strip()
-        if not text:
-            continue
-        spk = name_of(s.get("speaker_id"))
-        ts = f"{(s.get('start_ms') or 0)//1000}s" if s.get("start_ms") is not None else "?"
-        lines.append(f"[id={s['idx']}][{spk}@{ts}] {text}")
-    valid_ids = {s["idx"] for s in segments}
-    content, _ = llm_chat(
-        [{"role": "system", "content": _SYS_UNDERSTAND},
-         {"role": "user", "content": "会议转写稿如下：\n\n" + "\n".join(lines)}],
-        max_tokens=min(config.MAX_OUTPUT_TOKENS_CAP, 12000))
-    data = extract_json(content)
-    if not isinstance(data, dict):
-        raise LLMError("会议理解输出不是 JSON 对象")
-    out = {k: data.get(k) for k in _VALID_KEYS}
-    # 校验: 清洗非法 segment_ids, 补齐缺失键
-    for k in _VALID_KEYS:
-        if k == "topic":
-            out[k] = str(out[k] or "").strip() or "未识别会议主题"
-            continue
-        if not isinstance(out[k], list):
-            out[k] = []
+def _clean_understanding(data: dict, valid_ids: set[int]) -> dict:
+    # topic 允许为空, 由合并后的最终结果兜底(否则首块空主题会盖掉后面块的真实主题)
+    out = {"topic": str(data.get("topic") or "").strip()}
+    for k in _LIST_KEYS:
+        items = data.get(k)
+        if not isinstance(items, list):
+            items = []
         cleaned = []
-        for item in out[k]:
+        for item in items:
             if not isinstance(item, dict):
                 continue
             item = dict(item)
@@ -287,8 +388,123 @@ def understand_meeting(segments: list[dict], speaker_names: dict[int, str]) -> d
             item["invalid_refs"] = len(orig) - len(sids)
             cleaned.append(item)
         out[k] = cleaned
-    out["_speaker_names"] = speaker_names
     return out
+
+
+def _merge_understanding(a: dict | None, b: dict) -> dict:
+    if a is None:
+        return b
+    out = dict(a)
+    out["topic"] = out.get("topic") or b.get("topic") or ""
+    for k in _LIST_KEYS:
+        items = list(out.get(k) or [])
+        index = {_item_key(k, it): it for it in items}
+        for it in b.get(k) or []:
+            key = _item_key(k, it)
+            if key in index:
+                old = index[key]
+                sids = list(dict.fromkeys((old.get("segment_ids") or [])
+                                          + (it.get("segment_ids") or [])))
+                old["segment_ids"] = sids
+                old["invalid_refs"] = (old.get("invalid_refs") or 0) + (it.get("invalid_refs") or 0)
+            else:
+                items.append(it)
+                index[key] = it
+        out[k] = items
+    return out
+
+
+def _item_key(kind: str, item: dict) -> tuple:
+    fields = _MERGE_FIELDS.get(kind, ("content",))
+    return tuple(re.sub(r"\s+", "", str(item.get(f) or "")) for f in fields)
+
+
+def _understand_lines(lines: list[str], valid_ids: set[int], depth: int = 0) -> dict:
+    """一次(或二分后多次)调用 LLM 提取结构; 输出截断时自动二分重试。"""
+    content, finish = llm_chat(
+        [{"role": "system", "content": _SYS_UNDERSTAND},
+         {"role": "user", "content": "会议转写稿如下：\n\n" + "\n".join(lines)}],
+        max_tokens=min(config.MAX_OUTPUT_TOKENS_CAP, config.UNDERSTAND_MAX_TOKENS))
+    if finish == "length":
+        if len(lines) > 1 and depth < 2:
+            mid = len(lines) // 2
+            return _merge_understanding(
+                _understand_lines(lines[:mid], valid_ids, depth + 1),
+                _understand_lines(lines[mid:], valid_ids, depth + 1))
+        content, finish = llm_chat(
+            [{"role": "system", "content": _SYS_UNDERSTAND},
+             {"role": "user", "content": "会议转写稿如下：\n\n" + "\n".join(lines)
+              + "\n\n输出务必精简：每类不超过 8 条，segment_ids 每条不超过 5 个。"}],
+            max_tokens=min(config.MAX_OUTPUT_TOKENS_CAP, config.UNDERSTAND_MAX_TOKENS))
+        if finish == "length":
+            raise LLMTruncated("会议理解输出被截断(单块内容过长)")
+    data = extract_json(content)
+    if not isinstance(data, dict):
+        raise LLMError("会议理解输出不是 JSON 对象")
+    return _clean_understanding(data, valid_ids)
+
+
+def _chunk_lines(lines: list[str], max_chars: int) -> list[list[str]]:
+    if not lines:
+        return []
+    chunks: list[list[str]] = []
+    cur: list[str] = []
+    n = 0
+    for ln in lines:
+        if cur and n + len(ln) > max_chars:
+            chunks.append(cur)
+            cur, n = [], 0
+        cur.append(ln)
+        n += len(ln)
+    if cur:
+        chunks.append(cur)
+    return chunks
+
+
+def understand_meeting(segments: list[dict], speaker_names: dict[int, str], *,
+                       progress=None, cancel=None) -> dict:
+    """输入已校对片段(有 corrected 用 corrected, 否则 raw)。长稿分块提取后合并。"""
+    def name_of(sid) -> str:
+        return speaker_names.get(sid, f"说话人{sid + 1}") if sid is not None else "未知说话人"
+
+    lines: list[str] = []
+    valid_ids: set[int] = set()
+    for s in segments:
+        text = (s.get("corrected_text") or s.get("raw_text") or "").strip()
+        if not text:
+            continue
+        spk = name_of(s.get("speaker_id"))
+        ts = f"{(s.get('start_ms') or 0)//1000}s" if s.get("start_ms") is not None else "?"
+        lines.append(f"[id={s['idx']}][{spk}@{ts}] {text}")
+        valid_ids.add(s["idx"])
+    if not lines:
+        raise LLMError("无有效转写片段")
+
+    chunks = _chunk_lines(lines, config.UNDERSTAND_CHUNK_CHARS)
+    merged: dict | None = None
+    failed = 0
+    errors: list[str] = []
+    for i, chunk in enumerate(chunks, 1):
+        if cancel and cancel():
+            raise Cancelled("已取消")
+        try:
+            part = _understand_lines(chunk, valid_ids)
+            merged = _merge_understanding(merged, part)
+        except LLMError as e:
+            failed += 1
+            errors.append(str(e)[:200])
+        if progress:
+            progress(i, len(chunks))
+        if cancel and cancel():  # 单块也响应取消: 不落半成品
+            raise Cancelled("已取消")
+    if merged is None:
+        raise LLMError("会议理解失败: " + "; ".join(errors[:3]))
+    merged["topic"] = (merged.get("topic") or "").strip() or "未识别会议主题"
+    merged["_speaker_names"] = speaker_names
+    if failed:
+        merged["_stats"] = {"chunks": len(chunks), "failed_chunks": failed,
+                            "errors": errors}
+    return merged
 
 
 # ---------------------------------------------------------------- 阶段 C: 正式材料
@@ -301,8 +517,36 @@ _DOC_KINDS = {
 }
 
 
+def format_transcript(segments: list[dict], speaker_names: dict[int, str]) -> str:
+    lines = []
+    for s in segments:
+        text = (s.get("corrected_text") or s.get("raw_text") or "").strip()
+        if not text:
+            continue
+        sid = s.get("speaker_id")
+        if sid is None:
+            spk = "未知说话人"
+        else:
+            spk = speaker_names.get(sid, f"说话人{sid + 1}")
+        st = s.get("start_ms") or 0
+        ts = f"{st // 60000:02d}:{st // 1000 % 60:02d}"
+        lines.append(f"[{ts}] {spk}：{text}")
+    return "\n".join(lines)
+
+
+def transcript_hash(segments: list[dict], speaker_names: dict[int, str]) -> str:
+    """材料/理解所依据稿件的指纹(文本+说话人+顺序), 用于发现"基于旧版本"。"""
+    h = hashlib.sha256()
+    for s in segments:
+        text = (s.get("corrected_text") or s.get("raw_text") or "").strip()
+        sid = s.get("speaker_id")
+        spk = speaker_names.get(sid, f"说话人{sid + 1}") if sid is not None else "未知"
+        h.update(f"{s['idx']}|{spk}|{text}\n".encode())
+    return h.hexdigest()[:16]
+
+
 def generate_document(kind: str, understanding: dict, transcript_text: str,
-                      options: dict) -> str:
+                      options: dict, cancel=None) -> str:
     """生成正式材料(markdown)。截断自动续写(最多 2 次)。"""
     name, requirement = _DOC_KINDS[kind]
     opts = []
@@ -333,15 +577,23 @@ def generate_document(kind: str, understanding: dict, transcript_text: str,
                 {"role": "user", "content": user}]
     max_tokens = min(config.MAX_OUTPUT_TOKENS_CAP,
                      max(4096, int(options.get("word_count") or 3000) * 3))
+    if cancel and cancel():
+        raise Cancelled("已取消")
     content, finish = llm_chat(messages, max_tokens=max_tokens)
+    if cancel and cancel():
+        raise Cancelled("已取消")
     parts = [content]
     continues = 0
     while finish == "length" and continues < 2:  # 截断续写
+        if cancel and cancel():
+            raise Cancelled("已取消")
         continues += 1
         messages = messages + [
             {"role": "assistant", "content": parts[-1]},
             {"role": "user", "content": "继续输出，从中断处接续，不要重复已有内容。"}]
         content, finish = llm_chat(messages, max_tokens=max_tokens)
+        if cancel and cancel():
+            raise Cancelled("已取消")
         parts.append(content)
     doc = "".join(parts)
     if finish == "length":

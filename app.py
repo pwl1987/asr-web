@@ -2,22 +2,27 @@
 
 鉴权: 除 /login 与 /api/ping 外全部需要 Token(cookie `asr_token` / Bearer / ?token=)。
 Token 来源: 环境变量 ASR_WEB_TOKEN, 未设置则自动生成并持久化到 data/.auth-token(0600)。
+AI 阶段(校对/理解/成文)为后台任务: POST 返回 job_id, GET /api/jobs/{id} 轮询进度/结果。
 """
 import asyncio
 import hmac
 import json
+import logging
 import os
+import re
 import secrets
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import (HTMLResponse, JSONResponse, RedirectResponse, Response,
+                               StreamingResponse)
 from fastapi.staticfiles import StaticFiles
 
 import config
 import pipeline
+from ai_worker import AIWorker
 from store import Store
 from worker import Worker
 
@@ -37,12 +42,34 @@ def _resolve_token() -> str:
     return t
 
 
+class _TokenRedactor(logging.Filter):
+    """uvicorn 访问日志里把 ?token=... 脱敏, 避免凭据进 journal。"""
+
+    _PATTERN = re.compile(r"(token=)[^&\s\"']+")
+
+    def filter(self, record):
+        args = record.args
+        if isinstance(args, (tuple, list)):
+            try:
+                record.args = type(args)(
+                    self._PATTERN.sub(r"\1***", a) if isinstance(a, str) else a
+                    for a in args)
+            except Exception:  # noqa: BLE001 日志脱敏不允许影响业务
+                pass
+        return True
+
+
+for _logger in ("uvicorn.access", "uvicorn.error"):
+    logging.getLogger(_logger).addFilter(_TokenRedactor())
+
+
 config.ensure_dirs()
 AUTH_TOKEN = _resolve_token()
 COOKIE = "asr_token"
 
 store = Store(config.DB_PATH)
 worker = Worker(store)
+ai_worker = AIWorker(store)
 
 LOGIN_HTML = """<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -68,9 +95,13 @@ async def _lifespan(app: FastAPI):
     loop = asyncio.get_running_loop()
     loop.run_in_executor(None, pipeline.load_asr_model)  # 后台加载
     worker.start()
+    ai_worker.start()
     info = await worker.recover()
     if info.get("interrupted"):
         print(f"[asr-web] startup recovery: interrupted tasks -> {info['interrupted']}")
+    jinfo = await ai_worker.recover()
+    if jinfo.get("interrupted"):
+        print(f"[asr-web] startup recovery: interrupted AI jobs -> {jinfo['interrupted']}")
     yield
 
 
@@ -81,8 +112,10 @@ app = FastAPI(title="asr-web meeting workbench", lifespan=_lifespan)
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
-    if path == "/api/ping" or path == "/login":
+    if path in ("/api/ping", "/login"):
         return await call_next(request)
+    if path == "/favicon.ico":
+        return Response(status_code=204)
     token = request.cookies.get(COOKIE) or ""
     auth = request.headers.get("authorization") or ""
     if auth.lower().startswith("bearer "):
@@ -128,7 +161,8 @@ async def health():
             "auth": True, "llm_model": config.LLM_MODEL,
             "limits": {"max_upload_mb": config.MAX_UPLOAD_MB,
                        "max_duration_min": config.MAX_DURATION_MIN,
-                       "asr_concurrency": config.ASR_CONCURRENCY}}
+                       "asr_concurrency": config.ASR_CONCURRENCY,
+                       "ai_job_concurrency": config.AI_JOB_CONCURRENCY}}
 
 
 # ---------------------------------------------------------------- 任务: 创建/列表/详情/操作
@@ -137,15 +171,18 @@ async def health():
 async def create_task(request: Request, file: UploadFile = File(...), hotword: str = Form("")):
     filename = os.path.basename(file.filename or "recording.bin") or "recording.bin"
     max_bytes = config.MAX_UPLOAD_MB * 1024 * 1024
-    declared = request.headers.get("content-length")
-    if declared and int(declared) > max_bytes + 64 * 1024:
-        raise HTTPException(413, f"文件超过 {config.MAX_UPLOAD_MB}MB 上限")
-    # 重复提交去重: 同名同大小已有排队/处理中任务则直接复用
-    if declared:
-        existing = await asyncio.to_thread(store.find_active_by_file, filename, int(declared))
-        if existing:
-            return {"task_id": existing, "deduplicated": True}
-    tid = store.create_task(filename, int(declared or 0), (hotword or "").strip())
+    declared = 0
+    raw_len = request.headers.get("content-length")
+    if raw_len is not None:
+        try:
+            declared = int(raw_len)
+        except ValueError:
+            raise HTTPException(400, "Content-Length 非法")
+        if declared < 0:
+            raise HTTPException(400, "Content-Length 非法")
+        if declared > max_bytes + 64 * 1024:
+            raise HTTPException(413, f"文件超过 {config.MAX_UPLOAD_MB}MB 上限")
+    tid = store.create_task(filename, declared, (hotword or "").strip())
     upload_path = Path(config.UPLOAD_DIR) / f"{tid}.bin"
     size = 0
     try:
@@ -157,18 +194,18 @@ async def create_task(request: Request, file: UploadFile = File(...), hotword: s
                 f.write(chunk)
     except Exception:
         upload_path.unlink(missing_ok=True)
-        store.update_task(tid, status="failed", error="上传中断或超限", stage="done")
+        store.purge_task(tid)
         raise
     if size == 0:
         upload_path.unlink(missing_ok=True)
-        store.delete_task_files(tid)
+        store.purge_task(tid)
         raise HTTPException(400, "空文件")
     store.update_task(tid, size_bytes=size)
-    # 流式后去重(声明的 Content-Length 含 multipart 开销, 必须按实际字节数再查一次)
+    # 流式后去重(按实际字节数; Content-Length 含 multipart 开销, 不能直接比)
     existing = await asyncio.to_thread(store.find_active_by_file, filename, size)
     if existing and existing != tid:
         upload_path.unlink(missing_ok=True)
-        store.delete_task_files(tid)
+        store.purge_task(tid)
         return {"task_id": existing, "deduplicated": True}
     await worker.enqueue(tid)
     return {"task_id": tid, "size_bytes": size}
@@ -221,11 +258,13 @@ async def retry_task(tid: str):
 @app.post("/api/tasks/{tid}/delete")
 async def delete_task(tid: str):
     t = store.get_task(tid)
-    if not t:
+    if not t or t["deleted"]:
         raise HTTPException(404, "任务不存在")
     if t["status"] == "processing":
         raise HTTPException(409, "处理中的任务不可删除, 请先等待完成或取消")
-    info = await asyncio.to_thread(store.delete_task_files, tid)
+    if store.has_active_job(tid):
+        raise HTTPException(409, "有 AI 任务进行中, 请先取消后再删除")
+    info = await asyncio.to_thread(store.purge_task, tid)
     removed = []
     for p in (info.get("audio_path"), str(Path(config.UPLOAD_DIR) / f"{tid}.bin")):
         if p and Path(p).exists():
@@ -249,7 +288,7 @@ async def get_segments(tid: str):
 async def patch_segment(seg_id: int, payload: dict):
     tid = payload.get("task_id") or ""
     t = store.get_task(tid)
-    if not t:
+    if not t or t["deleted"]:
         raise HTTPException(404, "任务不存在")
     segs = store.get_segments(tid)
     seg = next((s for s in segs if s["id"] == seg_id), None)
@@ -258,15 +297,14 @@ async def patch_segment(seg_id: int, payload: dict):
     changed = {}
     if "text" in payload:
         new = str(payload["text"] or "")
-        old = seg["corrected_text"] if seg["corrected_text"] is not None else seg["raw_text"]
-        store.update_segment(seg_id, tid, "text", old, new, "human")
+        store.update_segment(seg_id, tid, "text", new, "human")
         changed["text"] = new
     if "speaker_id" in payload:
         sid = payload["speaker_id"]
-        if sid is not None and (not isinstance(sid, int) or sid < 0 or sid > 63):
+        if isinstance(sid, bool) or (sid is not None and
+                                     (not isinstance(sid, int) or sid < 0 or sid > 999)):
             raise HTTPException(400, "speaker_id 非法")
-        old = seg["speaker_id"]
-        store.update_segment(seg_id, tid, "speaker_id", str(old), str(sid), "human")
+        store.update_segment(seg_id, tid, "speaker_id", sid, "human")
         if sid is not None:
             names = {s["speaker_id"] for s in store.get_speakers(tid)}
             if sid not in names:
@@ -318,7 +356,46 @@ async def reassign_segments(tid: str, payload: dict):
     return {"moved_segments": n}
 
 
-# ---------------------------------------------------------------- 音频回放(含 Range)
+# ---------------------------------------------------------------- 音频回放(含 Range, 流式)
+
+def _parse_range(header: str, size: int) -> tuple[int, int] | None:
+    if not header or not header.startswith("bytes="):
+        return None
+    spec = header[6:].split(",")[0].strip()
+    if "-" not in spec:
+        return None
+    a, b = spec.split("-", 1)
+    try:
+        if a == "":
+            if not b:
+                return None
+            n = int(b)
+            if n <= 0:
+                raise ValueError
+            start, end = max(0, size - n), size - 1
+        else:
+            start = int(a)
+            end = int(b) if b else size - 1
+    except ValueError:
+        raise HTTPException(416, "Range 非法")
+    if start < 0 or start >= size or end < start:
+        raise HTTPException(416, "Range 越界")
+    return start, min(end, size - 1)
+
+
+def _file_stream(path: Path, start: int, end: int, chunk: int = 256 * 1024):
+    def gen():
+        with open(path, "rb") as f:
+            f.seek(start)
+            remaining = end - start + 1
+            while remaining > 0:
+                b = f.read(min(chunk, remaining))
+                if not b:
+                    break
+                remaining -= len(b)
+                yield b
+    return gen()
+
 
 @app.get("/api/tasks/{tid}/audio")
 async def task_audio(tid: str, request: Request):
@@ -329,101 +406,117 @@ async def task_audio(tid: str, request: Request):
     if not path.exists():
         raise HTTPException(404, "音频文件已清理")
     size = path.stat().st_size
-    rng = request.headers.get("range")
-    if rng and rng.startswith("bytes="):
-        try:
-            start_s, end_s = rng[6:].split("-", 1)
-            start = int(start_s or 0)
-            end = int(end_s) if end_s else min(start + 1024 * 1024, size - 1)
-        except ValueError:
-            raise HTTPException(416, "Range 非法")
-        end = min(end, size - 1)
-        if start > end or start >= size:
-            raise HTTPException(416, "Range 越界")
-        with open(path, "rb") as f:
-            f.seek(start)
-            data = f.read(end - start + 1)
-        return Response(data, status_code=206, media_type="audio/wav",
-                        headers={"Content-Range": f"bytes {start}-{end}/{size}",
-                                 "Accept-Ranges": "bytes"})
-    return Response(path.read_bytes(), media_type="audio/wav",
-                    headers={"Accept-Ranges": "bytes"})
+    rng = _parse_range(request.headers.get("range") or "", size)
+    if rng:
+        start, end = rng
+        return StreamingResponse(
+            _file_stream(path, start, end), status_code=206, media_type="audio/wav",
+            headers={"Content-Range": f"bytes {start}-{end}/{size}",
+                     "Content-Length": str(end - start + 1),
+                     "Accept-Ranges": "bytes"})
+    return StreamingResponse(
+        _file_stream(path, 0, size - 1), media_type="audio/wav",
+        headers={"Content-Length": str(size), "Accept-Ranges": "bytes"})
 
 
-# ---------------------------------------------------------------- LLM 分阶段
+# ---------------------------------------------------------------- AI 后台任务
 
-@app.post("/api/tasks/{tid}/proofread")
-async def proofread(tid: str):
+def _job_view(job: dict) -> dict:
+    out = dict(job)
+    for k in ("params", "result"):
+        if out.get(k):
+            try:
+                out[k] = json.loads(out[k])
+            except (TypeError, ValueError):
+                pass
+    return out
+
+
+def _active_job_or_409(tid: str) -> dict:
     t = store.get_task(tid)
     if not t or t["deleted"]:
         raise HTTPException(404, "任务不存在")
+    return t
+
+
+@app.post("/api/tasks/{tid}/proofread", status_code=202)
+async def start_proofread(tid: str, payload: dict | None = None):
+    t = _active_job_or_409(tid)
     if t["status"] != "done":
         raise HTTPException(409, "转写未完成")
-    segs = store.get_segments(tid)
-    if not segs:
+    if not store.get_segments(tid):
         raise HTTPException(409, "无转写片段")
-    async with worker.llm_sem:
-        try:
-            corrected, stats = await asyncio.to_thread(
-                pipeline.proofread_segments, segs, t["hotword"] or "")
-        except pipeline.LLMError as e:
-            raise HTTPException(502, str(e))
-    for s in segs:
-        if s["idx"] in corrected:
-            store.update_segment(s["id"], tid, "text", s["raw_text"],
-                                 corrected[s["idx"]], "llm")
-    return {"stats": stats, "corrected_count": len(corrected)}
+    body = payload or {}
+    params = {"only_missing": bool(body.get("only_missing")),
+              "force_human": bool(body.get("force_human"))}
+    existing = store.find_active_job(tid, "proofread")
+    if existing:
+        return {"job_id": existing, "deduplicated": True}
+    jid = store.create_job(tid, "proofread", params)
+    await ai_worker.enqueue(jid)
+    return {"job_id": jid, "status": "queued"}
 
 
-@app.post("/api/tasks/{tid}/understand")
-async def understand(tid: str):
-    t = store.get_task(tid)
-    if not t or t["deleted"]:
-        raise HTTPException(404, "任务不存在")
-    segs = store.get_segments(tid)
-    if not segs:
+@app.post("/api/tasks/{tid}/understand", status_code=202)
+async def start_understand(tid: str):
+    _active_job_or_409(tid)
+    if not store.get_segments(tid):
         raise HTTPException(409, "无转写片段")
-    speakers = {s["speaker_id"]: s["display_name"] for s in store.get_speakers(tid)}
-    async with worker.llm_sem:
-        try:
-            data = await asyncio.to_thread(pipeline.understand_meeting, segs, speakers)
-        except pipeline.LLMError as e:
-            raise HTTPException(502, str(e))
-    doc_id = store.put_document(tid, "understanding", json.dumps(data, ensure_ascii=False))
-    return {"document_id": doc_id, "understanding": data}
+    existing = store.find_active_job(tid, "understand")
+    if existing:
+        return {"job_id": existing, "deduplicated": True}
+    jid = store.create_job(tid, "understand", {})
+    await ai_worker.enqueue(jid)
+    return {"job_id": jid, "status": "queued"}
 
 
-@app.post("/api/tasks/{tid}/documents")
-async def gen_document(tid: str, payload: dict):
-    t = store.get_task(tid)
-    if not t or t["deleted"]:
-        raise HTTPException(404, "任务不存在")
+@app.post("/api/tasks/{tid}/documents", status_code=202)
+async def start_document(tid: str, payload: dict):
+    _active_job_or_409(tid)
     kind = payload.get("kind") or ""
     if kind not in pipeline._DOC_KINDS:
         raise HTTPException(400, f"kind 必须是 {list(pipeline._DOC_KINDS)}")
-    docs = store.get_documents(tid, "understanding")
-    if not docs:
+    options = payload.get("options") or {}
+    if not isinstance(options, dict):
+        raise HTTPException(400, "options 必须是对象")
+    if not store.get_documents(tid, "understanding"):
         raise HTTPException(409, "请先生成会议理解(understand)")
-    understanding = json.loads(docs[0]["content"])
-    segs = store.get_segments(tid)
-    speakers = {s["speaker_id"]: s["display_name"] for s in store.get_speakers(tid)}
-    lines = []
-    for s in segs:
-        text = (s.get("corrected_text") or s.get("raw_text") or "").strip()
-        if text:
-            sid = s.get("speaker_id")
-            spk = speakers.get(sid, f"说话人{sid + 1}" if sid is not None else "未知说话人")
-            st = s.get("start_ms") or 0
-            ts = f"{st // 60000:02d}:{st // 1000 % 60:02d}"
-            lines.append(f"[{ts}] {spk}：{text}")
-    async with worker.llm_sem:
-        try:
-            doc = await asyncio.to_thread(pipeline.generate_document, kind, understanding,
-                                          "\n".join(lines), payload.get("options") or {})
-        except pipeline.LLMError as e:
-            raise HTTPException(502, str(e))
-    doc_id = store.put_document(tid, kind, doc, payload.get("options") or {})
-    return {"document_id": doc_id, "kind": kind, "content": doc}
+    params = {"kind": kind, "options": options}
+    existing = store.find_active_job(tid, "document", params)
+    if existing:
+        return {"job_id": existing, "deduplicated": True}
+    jid = store.create_job(tid, "document", params)
+    await ai_worker.enqueue(jid)
+    return {"job_id": jid, "status": "queued"}
+
+
+@app.get("/api/jobs/{jid}")
+async def get_job(jid: str):
+    job = store.get_job(jid)
+    if not job:
+        raise HTTPException(404, "任务不存在")
+    return _job_view(job)
+
+
+@app.get("/api/tasks/{tid}/jobs")
+async def list_jobs(tid: str, kind: str | None = None, active: bool = False, limit: int = 20):
+    _active_job_or_409(tid)
+    return [_job_view(j) for j in store.list_jobs(tid, kind=kind,
+                                                  active_only=active, limit=limit)]
+
+
+@app.post("/api/jobs/{jid}/cancel")
+async def cancel_job(jid: str):
+    job = store.get_job(jid)
+    if not job:
+        raise HTTPException(404, "任务不存在")
+    if job["status"] == "queued":
+        store.update_job(jid, status="cancelled", detail="已取消")
+        return {"status": "cancelled"}
+    if job["status"] == "running":
+        store.update_job(jid, cancel_requested=1)
+        return {"status": "cancelling", "note": "当前批次结束后生效"}
+    raise HTTPException(409, f"状态 {job['status']} 不可取消")
 
 
 @app.get("/api/tasks/{tid}/documents")

@@ -29,6 +29,21 @@ def test_query_token_ok(client):
     assert client.get(f"/api/tasks?token={TOKEN}").status_code == 200
 
 
+def test_access_log_token_redacted(client):
+    """?token= 允许使用, 但写访问日志前必须脱敏(避免凭据进 journal)。"""
+    import logging
+
+    import app
+
+    rec = logging.LogRecord(
+        "uvicorn.access", logging.INFO, "", 0,
+        '%s - "%s %s HTTP/%s" %d',
+        ("1.2.3.4:5", "GET", "/api/tasks?token=secret123&x=1", "1.1", 200), None)
+    assert app._TokenRedactor().filter(rec)
+    path_arg = rec.args[2]
+    assert "secret123" not in path_arg and "token=***" in path_arg
+
+
 def test_page_redirects_to_login(client):
     r = client.get("/", follow_redirects=False)
     assert r.status_code == 302 and "/login" in r.headers["location"]
@@ -198,16 +213,42 @@ def test_retry_after_failure(client, monkeypatch):
 
 
 def test_delete_cleans_files(client):
+    from app import store
     tid = upload(client).json()["task_id"]
     t = wait_task(client, tid, {"done"})
     upload_bin = Path(config.UPLOAD_DIR) / f"{tid}.bin"
     audio = Path(t["audio_path"])
-    assert upload_bin.exists() and audio.exists()
+    # 转写成功后原始上传已清理, 只留回放用 16k wav
+    assert not upload_bin.exists() and audio.exists()
+    assert store.get_segments(tid) and store.get_speakers(tid)
+    # 人为留下一个 bin(历史数据/异常路径) → 删除时也要清掉
+    upload_bin.write_bytes(b"leftover")
     r = client.post(f"/api/tasks/{tid}/delete", headers=AUTH)
     assert r.status_code == 200
     assert not upload_bin.exists() and not audio.exists()
+    # 片段/说话人/文档/编辑/AI job 等数据行一并清除
+    assert store.get_segments(tid) == [] and store.get_speakers(tid) == []
+    assert store.get_documents(tid) == [] and store.get_edits(tid) == []
     assert client.get(f"/api/tasks/{tid}", headers=AUTH).status_code == 404
     assert all(x["id"] != tid for x in client.get("/api/tasks", headers=AUTH).json())
+
+
+def test_ai_job_recovery_and_purge(client):
+    from app import store
+    jid = store.create_job("recover-task", "proofread", {})
+    store.update_job(jid, status="running")
+    info = store.recover_jobs()
+    assert jid in info["interrupted"]
+    assert store.get_job(jid)["status"] == "failed"
+    queued = store.create_job("recover-task", "understand", {})
+    assert queued in store.pending_queued_jobs()
+    # 任务删除时 AI job 一并清理
+    tid = upload(client).json()["task_id"]
+    wait_task(client, tid, {"done"})
+    done_job = store.create_job(tid, "understand", {})
+    store.update_job(done_job, status="done")
+    client.post(f"/api/tasks/{tid}/delete", headers=AUTH)
+    assert store.get_job(done_job) is None
 
 
 def test_delete_processing_blocked(client, monkeypatch):
@@ -259,6 +300,23 @@ def test_segment_edit_and_history(client):
     assert d["edits"][0]["field"] == "text"
     # 原始文本不可变
     assert d["segments"][0]["raw_text"] == "今天讨论项目进度"
+
+
+def test_speaker_change_keeps_text_provenance(client):
+    """改说话人不能把 corrected_by 清空(那是文本修正来源, 不是说话人来源)。"""
+    tid = upload(client).json()["task_id"]
+    wait_task(client, tid, {"done"})
+    seg = client.get(f"/api/tasks/{tid}/segments", headers=AUTH).json()["segments"][0]
+    client.patch(f"/api/segments/{seg['id']}", headers=AUTH,
+                 json={"task_id": tid, "text": "人工文本"})
+    r = client.patch(f"/api/segments/{seg['id']}", headers=AUTH,
+                     json={"task_id": tid, "speaker_id": 5})
+    assert r.status_code == 200
+    d = client.get(f"/api/tasks/{tid}/segments", headers=AUTH).json()
+    changed = next(s for s in d["segments"] if s["id"] == seg["id"])
+    assert changed["speaker_id"] == 5
+    assert changed["corrected_by"] == "human"
+    assert changed["corrected_text"] == "人工文本"
 
 
 def test_speaker_rename_merge_split_reassign(client):

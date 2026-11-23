@@ -101,6 +101,20 @@ def wait_task(client, tid, statuses, timeout=10):
     raise AssertionError(f"任务未在 {timeout}s 内进入 {statuses}, 最后状态: {last}")
 
 
+def wait_job(client, jid, statuses=("done",), timeout=10):
+    """轮询 AI 后台任务直到目标状态。"""
+    if isinstance(statuses, str):
+        statuses = {statuses}
+    deadline = time.time() + timeout
+    last = None
+    while time.time() < deadline:
+        last = client.get(f"/api/jobs/{jid}", headers=AUTH).json()
+        if last["status"] in statuses:
+            return last
+        time.sleep(0.05)
+    raise AssertionError(f"AI 任务未在 {timeout}s 内进入 {statuses}, 最后: {last}")
+
+
 def upload(client, name="m.wav", content=b"x" * 1000, hotword=""):
     return client.post("/api/tasks", headers=AUTH,
                        files={"file": (name, content, "audio/wav")},
@@ -120,6 +134,6 @@ def _clean_data():
     with app_mod.store._lock:
         app_mod.store._conn.executescript(
             "DELETE FROM tasks; DELETE FROM segments; DELETE FROM speakers;"
-            " DELETE FROM edits; DELETE FROM documents;")
+            " DELETE FROM edits; DELETE FROM documents; DELETE FROM ai_jobs;")
         app_mod.store._conn.commit()
     yield

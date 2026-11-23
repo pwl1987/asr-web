@@ -6,3 +6,5 @@ __pycache__/
 /tmp/
 .venv/
 .test-data/
+# 运行数据: SQLite / 上传录音 / 解码音频 / 访问令牌
+data/

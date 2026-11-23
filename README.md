@@ -11,10 +11,11 @@ FunASR Paraformer 中文会议转写 + LLM 校对/整理的本地 Web 工作台�
 - **任务化**：录音/文件上传异步转写，SQLite 持久化；服务重启自动恢复（中断任务标记可重试、排队任务续跑）；取消/重试/删除（含文件清理）；重复提交自动去重
 - **多人会议**：CAM++ 说话人聚类自动分组；说话人改名/合并/拆分/逐段改派；未知说话人显式标注；ASR 原始结果不可变（人工/LLM 修正分层存储，带编辑历史）
 - **原音联动**：录音保留在服务端（16k mono wav），点击任意片段/理解条目的 `#segment` 引用直接回听对应音频（HTTP Range 支持拖动）
-- **LLM 三阶段**（不做一次性黑盒总结）：
-  1. **忠实校对**——分批逐段纠 ASR 错误（同音字/专名/幻觉/标点），漏段自动重试，片段级回填，缺段如实上报
-  2. **会议理解**——主题/讨论/观点/分歧/决定/建议/待办/待确认，严格区分"建议≠通过"，全部条目带 `segment_ids` 溯源，非法引用过滤并计数
+- **LLM 三阶段**（后台 job 化，不做一次性黑盒总结）：
+  1. **忠实校对**——分批并行纠 ASR 错误（同音字/专名/幻觉/标点），漏段自动重试，**每批完成即回填**（失败/取消不丢已完成部分），缺段可一键补缺；**默认绝不覆盖人工修改**
+  2. **会议理解**——主题/讨论/观点/分歧/决定/建议/待办/待确认，严格区分"建议≠通过"，全部条目带 `segment_ids` 溯源，非法引用过滤并计数；长稿自动分块提取后合并，输出截断时二分重试
   3. **正式材料**——完整文字稿/主题大纲/会议纪要/情况汇报四种，可配标题/受众/字数/语气/是否保留发言人/是否附待确认；截断自动续写并在仍截断时标注
+- **可进度、可取消**：AI 任务返回 `job_id`，前端显示批次进度、支持取消（当前批次结束后生效）；刷新/离开页面后可继续查看；服务重启自动恢复排队任务
 - **导出**：TXT / SRT（含说话人与时间）/ Markdown
 - **安全**：Token 鉴权（cookie / Bearer / `?token=`），未配置时启动自动生成并落盘 `data/.auth-token`(0600)；上传流式限长、解码时长上限、ffmpeg 超时与并发限制、GPU 上 ASR 串行
 
@@ -24,10 +25,11 @@ FunASR Paraformer 中文会议转写 + LLM 校对/整理的本地 Web 工作台�
 flowchart LR
     B[浏览器工作台] -->|上传/录音| A2[鉴权中间件]
     A2 --> F[FastAPI :8466]
-    F --> Q[(SQLite 任务队列<br/>tasks/segments/speakers/edits/documents)]
-    F --> W[Worker: 解码x2 / ASR x1 / LLM x2]
+    F --> Q[(SQLite<br/>tasks/segments/speakers/edits/documents/ai_jobs)]
+    F --> W[ASR Worker<br/>解码x2 / ASR x1]
+    F --> J[AI Worker<br/>job 并发 x2 / 批并行]
     W -->|ffmpeg 流式解码| A[FunASR<br/>paraformer-zh + fsmn-vad + ct-punc + cam++]
-    W -->|OpenAI 兼容| L[本地 LLM :8350]
+    J -->|OpenAI 兼容| L[本地 LLM :8350]
     A --> AW[16k mono wav 留档 → 回听]
 ```
 
@@ -37,8 +39,8 @@ flowchart LR
 
 ```bash
 python3 -m venv /data/tools/funasr-env
-/data/tools/funasr-env/bin/pip install torch torchaudio numpy==1.26.4 \
-    funasr modelscope fastapi "uvicorn[standard]" python-multipart imageio-ffmpeg
+# torch 按服务器 CUDA 版本选择 wheel
+/data/tools/funasr-env/bin/pip install -r requirements.txt -r requirements-asr.txt
 ```
 
 > imageio-ffmpeg 自带静态 ffmpeg 二进制，服务器无需 `apt install ffmpeg`。
@@ -83,14 +85,18 @@ ufw allow 8466/tcp
 | `GET /api/health` | 模型/限制状态（需鉴权） |
 | `POST /api/tasks` | multipart 上传(`file`,`hotword?`) → `{task_id}`（重复提交自动去重） |
 | `GET /api/tasks` / `GET /api/tasks/{id}` | 任务列表 / 详情 |
-| `POST /api/tasks/{id}/cancel·retry·delete` | 取消(未进 ASR 前)/重试/删除(清文件) |
+| `POST /api/tasks/{id}/cancel·retry·delete` | 取消(未进 ASR 前)/重试/删除(清数据与文件) |
 | `GET /api/tasks/{id}/audio` | 回放（支持 Range） |
 | `GET /api/tasks/{id}/segments` | 片段+说话人+编辑历史 |
 | `PATCH /api/segments/{id}` | 改文本/改说话人（记编辑历史，原始结果不可变） |
 | `POST /api/tasks/{id}/speakers/{sid}/rename` / `speakers/merge` / `speakers/split` / `segments/reassign` | 说话人管理 |
-| `POST /api/tasks/{id}/proofread` | 阶段 A：LLM 忠实校对（分批+缺段重试） |
-| `POST /api/tasks/{id}/understand` | 阶段 B：会议理解（结构化+溯源） |
-| `POST/GET /api/tasks/{id}/documents` | 阶段 C：材料生成 / 历史材料 |
+| `POST /api/tasks/{id}/proofread` | 阶段 A：创建校对 job（`{only_missing?}`可直接补缺）→ 202 `{job_id}` |
+| `POST /api/tasks/{id}/understand` | 阶段 B：创建会议理解 job → 202 `{job_id}` |
+| `POST /api/tasks/{id}/documents` | 阶段 C：创建材料生成 job（`kind`+`options`）→ 202 `{job_id}` |
+| `GET /api/jobs/{job_id}` | job 状态/进度/结果（`status=queued|running|done|failed|cancelled`） |
+| `GET /api/tasks/{id}/jobs` | 任务的 AI job 历史（`?active=1&kind=...`） |
+| `POST /api/jobs/{job_id}/cancel` | 取消（排队立即生效；运行中当前批次结束后生效） |
+| `GET /api/tasks/{id}/documents` | 历史材料 |
 | `POST /api/transcribe` | 兼容旧接口：同步转写（不建任务） |
 | `POST /api/verify` | 兼容旧接口：整段校对/整理 |
 
@@ -105,15 +111,21 @@ ufw allow 8466/tcp
 | `ASR_DATA_DIR` | 数据目录：SQLite/上传/音频/临时（默认 ./data） |
 | `ASR_MAX_UPLOAD_MB` / `ASR_MAX_DURATION_MIN` | 上传大小(512)/时长(120)上限 |
 | `ASR_DECODE_CONCURRENCY` / `ASR_ASR_CONCURRENCY` / `ASR_LLM_CONCURRENCY` | 并发(2/1/2) |
+| `ASR_AI_JOB_CONCURRENCY` / `ASR_PROOFREAD_WORKERS` | 同时运行的 AI job 数(2) / 单次校对批并行数(默认=LLM 并发) |
 | `ASR_FFMPEG_TIMEOUT` / `ASR_LLM_TIMEOUT` | 解码/LLM 超时秒(900/1200) |
 | `ASR_STAGE_A_BATCH_CHARS` | 校对分批字符数(2500) |
+| `ASR_UNDERSTAND_CHUNK_CHARS` / `ASR_UNDERSTAND_MAX_TOKENS` | 理解分块字符数(12000) / 单次输出上限(12000) |
+| `ASR_MODEL_WAIT_SEC` | 任务等待模型加载就绪的上限秒(180) |
+| `ASR_KEEP_UPLOAD` | 转写成功后保留原始上传(默认 0，仅留 16k wav) |
 
 ## 测试
 
 ```bash
-pip install pytest httpx imageio-ffmpeg
-python -m pytest tests/ -q     # 32 项桩测试, 不依赖真实 GPU/LLM
+pip install -r requirements-dev.txt
+python -m pytest tests/ -q     # 40 项桩测试, 不依赖真实 GPU/LLM
 ```
+
+GitHub Actions 会对每次 push/PR 跑同一套桩测试（`.github/workflows/ci.yml`）。
 
 真实端到端（合成 3 人会议）脚本：`tests/gen_meeting.py`（Mac 生成）+ `tests/e2e_eval.py`（服务器执行，输出 CER/说话人/提取结果）。
 
@@ -123,7 +135,12 @@ python -m pytest tests/ -q     # 32 项桩测试, 不依赖真实 GPU/LLM
 - **特色 TTS 音色会触发 Paraformer 重复字幻觉**（"分分分五的流量量量"）——合成音伪影，真实人声无此问题；真实会议录音的准确率验证待补。
 - `[hidden]` 元素若带 `display:flex` 类会被覆盖常显，页面已加 `[hidden]{display:none!important}`。
 - ct-punc 选 zh 版（272727 vocab）即可，比 cn-en large 小一半；cam++ 魔搭 id 是 `speech_campplus_sv_zh-cn_16k-common`（`svz` 拼法的仓库不存在）。
-- ASR 处理中不可中断（取消仅对未进 ASR 的任务生效）；极长会议的说话人重编号依赖聚类结果，同人多标签需人工合并。
+- ASR 处理中不可中断（取消仅对未进 ASR 的任务生效）；AI job 取消在当前批次结束后生效，已完成的批次会保留。
+- 校对默认跳过 `corrected_by='human'` 的片段，重新校对不会覆盖人工修改；需要整体重跑可传 `force_human=true`（会记入编辑历史）。
+- 删除任务是**硬删除**：片段/说话人/编辑历史/材料/AI job 与音频一并清除，不可恢复。
+- 转写成功后原始上传默认清理（只留 16k mono wav）；设 `ASR_KEEP_UPLOAD=1` 可保留原始音频。
+- 极长会议的说话人重编号依赖聚类结果，同人多标签需人工合并。
+- `?token=` 仍可用于脚本调用，但会写进 uvicorn 访问日志前被脱敏为 `token=***`；生产建议用 Bearer。
 
 ## License
 
