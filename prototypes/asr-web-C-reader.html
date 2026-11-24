@@ -243,6 +243,11 @@ svg{display:block}
 }
 .turn.picked .say{background:var(--sheet);box-shadow:var(--shadow-1);border-radius:8px;padding:12px 14px;margin:-12px -14px}
 
+/* 分节标记：类别变化处才出现 */
+.secmark{display:flex;align-items:center;gap:12px;padding:22px 0 2px}
+.secmark span{font-size:var(--cap);color:var(--muted);letter-spacing:.06em;white-space:nowrap}
+.secmark::after{content:"";flex:1;height:1px;background:var(--rule-2)}
+
 /* 页边注 */
 .note{display:flex;flex-direction:column;gap:9px;align-items:flex-start;padding:3px 0 0 16px}
 .note .tc{font-family:var(--mono);font-size:var(--cap);color:var(--muted);letter-spacing:.03em}
@@ -346,6 +351,20 @@ svg{display:block}
 }
 .tplnote .tag{background:var(--rule-2)}
 .autodet{color:var(--ink-2)}
+
+/* 收件箱 */
+.inbox-note{font-size:var(--cap);color:var(--muted);line-height:1.7;margin-bottom:14px;padding-bottom:12px;border-bottom:1px dashed var(--rule)}
+.inbox-row{display:grid;grid-template-columns:52px minmax(0,1fr) auto;gap:4px 12px;align-items:start;padding:13px 0;border-bottom:1px solid var(--rule-2)}
+.inbox-row:last-child{border-bottom:0}
+.inbox-row .tm{font-family:var(--mono);font-size:var(--cap);color:var(--muted);padding-top:2px}
+.inbox-row .ti{font-size:var(--small);font-weight:500;line-height:1.5}
+.inbox-row .ti small{display:block;font-weight:400;color:var(--muted);font-size:var(--cap);margin-top:3px}
+.inbox-row .cl{display:flex;flex-wrap:wrap;gap:5px;grid-column:2/3;margin-top:6px}
+.inbox-row .cl span{font-size:12px;color:var(--ink-2);background:var(--rule-2);border-radius:5px;padding:2px 7px}
+.inbox-row .out{grid-column:3/4;grid-row:1/3;text-align:right;font-size:var(--cap);color:var(--muted)}
+.inbox-row .out b{display:block;color:var(--ink-2);font-weight:500;margin-bottom:6px}
+.inbox-row .out .btn{height:26px;padding:0 10px;font-size:var(--cap)}
+.inbox-row.need .ti{color:var(--warn)}
 
 /* 速记卡 */
 .memo{padding:20px 20px 22px}
@@ -727,13 +746,15 @@ body.no-anim *{transition:none!important}
     <button class="iconbtn" id="drawerClose" aria-label="关闭"><svg class="ic"><use href="#i-close"/></svg></button>
   </header>
   <div class="tabs" role="tablist" id="tabs">
-    <button role="tab" data-pane="min" aria-selected="true">纪要</button>
+    <button role="tab" data-pane="inbox" aria-selected="true">收件箱 <span class="badge">3</span></button>
+    <button role="tab" data-pane="min" aria-selected="false">纪要</button>
     <button role="tab" data-pane="doc" aria-selected="false">材料 <span class="badge">2</span></button>
     <button role="tab" data-pane="term" aria-selected="false">术语 <span class="badge">6</span></button>
     <button role="tab" data-pane="job" aria-selected="false">任务</button>
   </div>
   <div class="panes">
-    <div class="pane on" id="pane-min"></div>
+    <div class="pane on" id="pane-inbox"></div>
+    <div class="pane" id="pane-min"></div>
     <div class="pane" id="pane-doc"></div>
     <div class="pane" id="pane-term"></div>
     <div class="pane" id="pane-job"></div>
@@ -784,7 +805,7 @@ var SPKC={'主持人':'var(--s6)','张明 · 算法':'var(--s1)','李经理':'va
 
 var MEETINGS=[
  {id:'m1',short:'产品评审会',tpl:'min',title:'产品评审会 · 第三会议室',file:'meeting.wav',dur:87,when:'今天 14:05',segs:14,
-  flow:{trans:{s:'done',note:'14 段 · 3 位说话人'},proof:{s:'done',note:'5 段未校'},under:{s:'done',note:'2 决定 · 2 待确认'},doc:{s:'done',note:'2 份'}},
+  flow:{trans:{s:'done',note:'14 段 · 3 位说话人'},proof:{s:'done',note:'5 段未校'},cls:{s:'done',note:'讨论/决定/待办 · 4 段'},under:{s:'done',note:'2 决定 · 2 待确认'},doc:{s:'done',note:'2 份'}},
   turns:[
    ['主持人',0,7,'那个，我们今天先过两件小事：上版遗留问题，还有年底算力预算。','llm'],
    ['主持人',7,6,'请相关同学把结论直接记在待办里，散会我就不单独发了。',null],
@@ -802,7 +823,7 @@ var MEETINGS=[
    ['主持人',90,5,'好，那今天就到这里，纪要我让助手出一下，散会。',null]
   ]},
  {id:'m2',short:'客户回访',tpl:'qa',title:'客户回访 · 电话会议',file:'call-1144.m4a',dur:604,when:'今天 15:40',segs:41,
-  flow:{trans:{s:'done',note:'41 段 · 2 位说话人'},proof:{s:'done',note:'全部已校'},under:{s:'todo'},doc:{s:'todo'}},
+  flow:{trans:{s:'done',note:'41 段 · 2 位说话人'},proof:{s:'done',note:'全部已校'},cls:{s:'done',note:'问答/闲聊 · 2 段'},under:{s:'todo'},doc:{s:'todo'}},
   turns:[
    ['李经理',0,12,'喂您好，我是明远科技的，上次给贵司做的接入系统，我这边做一次回访。','llm'],
    ['客户方',12,15,'哦对对对，是那个中控台的系统，我们用了两个多月了。','llm'],
@@ -811,7 +832,7 @@ var MEETINGS=[
    ['李经理',51,8,'明白，这个我们记一下，下个版本会优化。','llm']
   ]},
  {id:'m3',short:'Q4 算力预算',tpl:'min',title:'Q4 算力预算评审',file:'q4-budget.mp3',dur:1450,when:'11/21 10:12',segs:96,
-  flow:{trans:{s:'done',note:'96 段 · 5 位说话人'},proof:{s:'done',note:'3 段未校'},under:{s:'done',note:'1 决定 · 1 待确认'},doc:{s:'todo'}},
+  flow:{trans:{s:'done',note:'96 段 · 5 位说话人'},proof:{s:'done',note:'3 段未校'},cls:{s:'done',note:'讨论 · 1 段'},under:{s:'done',note:'1 决定 · 1 待确认'},doc:{s:'todo'}},
   turns:[
    ['李经理',0,15,'今天把四季度到明年的推理卡预算一次性定下来，各条线按顺序报。','llm'],
    ['张明 · 算法',15,18,'训练侧四季度基本满了，扩容两条八卡机柜，明年一季度才有位。','llm'],
@@ -820,7 +841,7 @@ var MEETINGS=[
    ['李经理',61,10,'那就先按 80 万报上去，后面再调。',null]
   ]},
  {id:'m4',short:'验收会议',tpl:'memo',title:'验收会议 · 周四 15:00',file:'asr-test.wav',dur:0,when:'昨天 23:05',segs:0,
-  flow:{trans:{s:'run',note:'转写中 62%'},proof:{s:'todo'},under:{s:'todo'},doc:{s:'todo'}},
+  flow:{trans:{s:'run',note:'转写中 62%'},proof:{s:'todo'},cls:{s:'todo'},under:{s:'todo'},doc:{s:'todo'}},
   turns:[]}
 ];
 
@@ -831,6 +852,9 @@ var TPLS={
   diary:{name:'日记随笔',diar:false,detect:'像一段自述'},
   qa:{name:'问答摘要',diar:true,detect:'像一次对话'}
 };
+
+/* 段落级自动分类：LLM 给每个片段打类，类别变化处才显示分节标记 */
+var CLS=['讨论','讨论','讨论','讨论','讨论','决定','决定','决定','讨论','讨论','讨论','待办','待办','待办'];
 
 var TERMS=[
  {from:'传行',to:'串行',n:1},
@@ -848,7 +872,7 @@ var JOBS=[
 ];
 
 var S={mid:'m1',view:'fixed',q:'',spk:'all',only:false,t:0,playing:false,follow:true,speed:1,
-       editing:null,hit:-1,pane:'min',demo:'filled',running:false,termUndo:null};
+       editing:null,hit:-1,pane:'inbox',demo:'filled',running:false,termUndo:null};
 
 function cur(){for(var i=0;i<MEETINGS.length;i++)if(MEETINGS[i].id===S.mid)return MEETINGS[i];return MEETINGS[0];}
 function unfixedOf(m){var n=0;m.turns.forEach(function(t){if(!t[4])n++;});return n;}
@@ -872,7 +896,7 @@ function renderHero(){
   $('#mtMeta').innerHTML=meta;
 }
 function renderFlow(){
-  var m=cur(),order=['trans','proof','under','doc'],names={trans:'转写',proof:'校对',under:'理解',doc:'材料'},out='';
+  var m=cur(),order=['trans','proof','cls','under','doc'],names={trans:'转写',proof:'校对',cls:'分类',under:'理解',doc:'材料'},out='';
   order.forEach(function(k,i){
     if(i)out+='<span class="sep"></span>';
     var st=m.flow[k]||{s:'todo'};
@@ -889,6 +913,13 @@ function visibleTurns(){
     out.push({t:t,i:i});
   });
   return out;
+}
+function clsOf(i){
+  var m=cur();
+  if(m.id==='m1'&&CLS[i])return CLS[i];
+  if(m.id==='m2')return (i>=2&&i<=3)?'问答':'闲聊';
+  if(m.id==='m3')return '讨论';
+  return '讨论';
 }
 function turnHtml(t,i){
   var rawView=S.view==='raw',txt=rawView?(t[5]||t[3]):t[3];
@@ -929,7 +960,13 @@ function renderScript(){
     box.innerHTML='<div class="empty">'+ICON('i-search')+'<div>没有匹配的段落</div>'+
       '<div style="margin-top:10px"><button class="btn btn-sm" id="clearFilter">清空筛选</button></div></div>';
   }else{
-    box.innerHTML=list.map(function(x){return turnHtml(x.t,x.i);}).join('');
+    var prev=null,h='';
+    list.forEach(function(x){
+      var c=clsOf(x.i);
+      if(c!==prev){h+='<div class="secmark"><span>'+esc(c)+'</span></div>';prev=c;}
+      h+=turnHtml(x.t,x.i);
+    });
+    box.innerHTML=h;
   }
   var uf=unfixedOf(m);
   $('#count').textContent=list.length===m.turns.length
@@ -940,6 +977,7 @@ function renderScript(){
 }
 function renderDrawer(){
   var m=cur();
+  $('#pane-inbox').innerHTML=inboxHtml(m);
   $('#pane-min').innerHTML=tplbarHtml(m)+paperHtml(m);
   $('#pane-doc').innerHTML=docHtml(m);
   $('#pane-term').innerHTML=termHtml();
@@ -1024,6 +1062,28 @@ function tplbarHtml(m){
      '<span>· 换一种只是重排文稿，几秒钟</span></div>';
   return h;
 }
+function inboxHtml(m){
+  return '<div class="inbox-note">先录再说：录完由本机模型自动分段分类，你只需要<b>确认</b>或<b>丢弃</b>。'+
+    '确认过的自动归档，不再打扰。</div>'+
+    '<div class="inbox-row">'+
+      '<span class="tm">14:05</span>'+
+      '<span class="ti">产品评审会 · 第三会议室<small>14 段 · 3 位说话人 · 1 分 27 秒</small></span>'+
+      '<span class="out"><b>3 篇成稿</b><button class="btn btn-sm" data-act="inboxok">确认归档</button></span>'+
+      '<span class="cl"><span>讨论</span><span>决定</span><span>待办</span></span>'+
+    '</div>'+
+    '<div class="inbox-row">'+
+      '<span class="tm">12:30</span>'+
+      '<span class="ti">路上随口记<small>9 段 · 1 位说话人 · 3 分 12 秒</small></span>'+
+      '<span class="out"><b>1 篇成稿</b><button class="btn btn-sm" data-act="inboxok">确认归档</button></span>'+
+      '<span class="cl"><span>自述</span><span>想法</span></span>'+
+    '</div>'+
+    '<div class="inbox-row need">'+
+      '<span class="tm">09:14</span>'+
+      '<span class="ti">未分类<small>8 秒 · 几乎没有有效语音</small></span>'+
+      '<span class="out"><b>需要你处理</b><button class="btn btn-sm" data-act="inboxdrop">丢弃</button></span>'+
+      '<span class="cl"><span>待定</span></span>'+
+    '</div>';
+}
 function docHtml(m){
   return '<div class="docitem"><div class="hd"><h4>会议纪要</h4><span class="badge">引用 11 处</span></div>'+
    '<div class="meta"><span>版本 v2</span><span>12 分钟前</span><span>在线可编辑</span></div>'+
@@ -1082,7 +1142,7 @@ function openDrawer(pane,instant){
   document.body.setAttribute('data-panel-open','1');
   if(instant){void document.body.offsetWidth;setTimeout(function(){document.body.classList.remove('no-anim');},700);}
   setBackdropOff(true);
-  $('#drawerTitle').textContent=S.pane==='min'?'纪要':(S.pane==='doc'?'材料':(S.pane==='term'?'术语与替换':'任务'));
+  $('#drawerTitle').textContent={inbox:'收件箱',min:'纪要',doc:'材料',term:'术语与替换',job:'任务'}[S.pane]||'成果';
   renderDrawer();
 }
 function closeDrawer(){
@@ -1176,7 +1236,7 @@ function bind(){
   $('#q').addEventListener('keydown',function(e){
     if(e.key==='Enter'){e.preventDefault();jumpHit(e.shiftKey?-1:1);}
   });
-  $('#openDrawer').addEventListener('click',function(){openDrawer('min');});
+  $('#openDrawer').addEventListener('click',function(){openDrawer();});
   $('#pipeBtn').addEventListener('click',runPipeline);
   $('#themeBtn').addEventListener('click',function(){
     var dark=document.documentElement.getAttribute('data-theme')==='dark';
@@ -1241,6 +1301,8 @@ function bind(){
     if(act==='docx'){toast('演示环境不导出真实 DOCX 文件');}
     if(act==='playdoc'){closeDrawer();seekTo(0);play();}
     if(act==='cancel'){toast('已取消转写任务');}
+    if(act==='inboxok'){toast('已确认归档，收件箱少了 1 条');}
+    if(act==='inboxdrop'){toast('已丢弃这一条');}
     if(act==='apply'){previewTerm(+b.dataset.i);}
     if(act==='undo'){undoTerm();}
   });
@@ -1473,7 +1535,7 @@ setTheme(saved);
 renderAll();
 bind();
 /* 深链：?panel=min|doc|term|job 直接打开成果面板，方便审阅与截图 */
-var mp=(location.search||'').match(/panel=(min|doc|term|job)/);
+var mp=(location.search||'').match(/panel=(inbox|min|doc|term|job)/);
 if(mp)openDrawer(mp[1],true);
 })();
 </script>
