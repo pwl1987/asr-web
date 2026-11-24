@@ -333,6 +333,46 @@ svg{display:block}
 }
 .paper cite:hover{background:var(--accent);color:var(--on-accent)}
 
+/* 文体切换 */
+.tplbar{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px}
+.tplbar button{
+  height:30px;padding:0 12px;border-radius:8px;font-size:var(--cap);color:var(--muted);
+  border:1px solid var(--rule);background:var(--sheet);
+}
+.tplbar button[aria-pressed="true"]{background:var(--ink);border-color:var(--ink);color:var(--paper);font-weight:500}
+.tplnote{
+  display:flex;align-items:center;gap:8px;font-size:var(--cap);color:var(--muted);
+  margin:-4px 0 14px;padding-bottom:12px;border-bottom:1px dashed var(--rule);
+}
+.tplnote .tag{background:var(--rule-2)}
+.autodet{color:var(--ink-2)}
+
+/* 速记卡 */
+.memo{padding:20px 20px 22px}
+.memo .lead{font-family:var(--serif);font-size:19px;line-height:1.7;color:var(--ink);margin:0 0 16px}
+.memo .act{display:flex;align-items:flex-start;gap:10px;padding:9px 0;border-bottom:1px solid var(--rule-2);font-size:var(--small);line-height:1.65}
+.memo .act:last-child{border-bottom:0}
+.memo .box{width:15px;height:15px;border-radius:4px;border:1.5px solid var(--faint);flex:none;margin-top:3px}
+.memo .who2{color:var(--muted);font-size:var(--cap);flex:none}
+
+/* 日记随笔 */
+.diary{padding:24px 22px 26px}
+.diary .date{font-family:var(--mono);font-size:var(--cap);color:var(--muted);letter-spacing:.06em}
+.diary h3{font-family:var(--serif);font-size:26px;margin:6px 0 14px;line-height:1.4}
+.diary .body p{font-family:var(--serif);font-size:16px;line-height:1.95;color:var(--ink);margin:0 0 12px}
+.diary .moods{display:flex;flex-wrap:wrap;gap:6px;margin-top:16px;padding-top:14px;border-top:1px solid var(--rule-2)}
+.diary .moods span{font-size:var(--cap);color:var(--ink-2);background:var(--rule-2);border-radius:6px;padding:3px 9px}
+.diary .aside{font-size:var(--cap);color:var(--muted);margin-top:12px;line-height:1.7}
+
+/* 问答摘要 */
+.qa .q{display:flex;gap:10px;margin-bottom:12px}
+.qa .q .who2{font-size:var(--cap);color:var(--muted);flex:none;width:62px;padding-top:2px;text-align:right}
+.qa .q .say2{font-size:var(--small);line-height:1.75;color:var(--ink)}
+.qa .q.ask .say2{font-weight:500}
+.qa .gloss{margin-top:16px;padding-top:14px;border-top:1px solid var(--rule-2)}
+.qa .gloss div{display:flex;gap:10px;font-size:var(--small);line-height:1.7;padding:4px 0}
+.qa .gloss b{flex:none;width:84px;color:var(--muted);font-weight:400}
+
 /* 材料列表 */
 .docitem{padding:16px 0;border-bottom:1px solid var(--rule-2)}
 .docitem:last-child{border-bottom:0}
@@ -673,6 +713,7 @@ body.no-anim *{transition:none!important}
     <div><h2><span class="n">02</span> 元信息变成批注</h2><p>时间码、校对状态、操作按钮移到右侧页边，主栏只剩字。像书上的旁注，不打断阅读。</p></div>
     <div><h2><span class="n">03</span> 说话人写成剧本</h2><p>名字右对齐成一列，正文顶格成行；不用头像、不用气泡、不用框，扫一眼就知道谁在说。</p></div>
     <div><h2><span class="n">04</span> 色彩克制</h2><p>暖白纸面 + 深墨字 + 一个靛青强调色；唯一暖色留给"待校对"这类真需要你动手的事。</p></div>
+    <div><h2><span class="n">05</span> 一段录音一种文体</h2><p>不是只有会议：会议纪要 / 速记卡 / 日记随笔 / 问答摘要由 LLM 自动判定，判错一键换；换文体还会连带改"要不要分离说话人"这类处理开关。</p></div>
   </section>
 </main>
 </div>
@@ -742,7 +783,7 @@ var $=function(s,r){return (r||document).querySelector(s);},
 var SPKC={'主持人':'var(--s6)','张明 · 算法':'var(--s1)','李经理':'var(--s3)'};
 
 var MEETINGS=[
- {id:'m1',short:'产品评审会',title:'产品评审会 · 第三会议室',file:'meeting.wav',dur:87,when:'今天 14:05',segs:14,
+ {id:'m1',short:'产品评审会',tpl:'min',title:'产品评审会 · 第三会议室',file:'meeting.wav',dur:87,when:'今天 14:05',segs:14,
   flow:{trans:{s:'done',note:'14 段 · 3 位说话人'},proof:{s:'done',note:'5 段未校'},under:{s:'done',note:'2 决定 · 2 待确认'},doc:{s:'done',note:'2 份'}},
   turns:[
    ['主持人',0,7,'那个，我们今天先过两件小事：上版遗留问题，还有年底算力预算。','llm'],
@@ -760,7 +801,7 @@ var MEETINGS=[
    ['李经理',84,6,'嗯，那我先按 80 万报上去，后面再调。','llm'],
    ['主持人',90,5,'好，那今天就到这里，纪要我让助手出一下，散会。',null]
   ]},
- {id:'m2',short:'客户回访',title:'客户回访 · 电话会议',file:'call-1144.m4a',dur:604,when:'今天 15:40',segs:41,
+ {id:'m2',short:'客户回访',tpl:'qa',title:'客户回访 · 电话会议',file:'call-1144.m4a',dur:604,when:'今天 15:40',segs:41,
   flow:{trans:{s:'done',note:'41 段 · 2 位说话人'},proof:{s:'done',note:'全部已校'},under:{s:'todo'},doc:{s:'todo'}},
   turns:[
    ['李经理',0,12,'喂您好，我是明远科技的，上次给贵司做的接入系统，我这边做一次回访。','llm'],
@@ -769,7 +810,7 @@ var MEETINGS=[
    ['客户方',37,14,'有一个，导出报表的时候偶尔会转圈，转个三四秒就好了，不影响什么。','llm'],
    ['李经理',51,8,'明白，这个我们记一下，下个版本会优化。','llm']
   ]},
- {id:'m3',short:'Q4 算力预算',title:'Q4 算力预算评审',file:'q4-budget.mp3',dur:1450,when:'11/21 10:12',segs:96,
+ {id:'m3',short:'Q4 算力预算',tpl:'min',title:'Q4 算力预算评审',file:'q4-budget.mp3',dur:1450,when:'11/21 10:12',segs:96,
   flow:{trans:{s:'done',note:'96 段 · 5 位说话人'},proof:{s:'done',note:'3 段未校'},under:{s:'done',note:'1 决定 · 1 待确认'},doc:{s:'todo'}},
   turns:[
    ['李经理',0,15,'今天把四季度到明年的推理卡预算一次性定下来，各条线按顺序报。','llm'],
@@ -778,10 +819,18 @@ var MEETINGS=[
    ['张明 · 算法',45,16,'按现在用量，四季度刚好卡在预算线，如果批量推理全量放开，可能翻倍。','llm'],
    ['李经理',61,10,'那就先按 80 万报上去，后面再调。',null]
   ]},
- {id:'m4',short:'验收会议',title:'验收会议 · 周四 15:00',file:'asr-test.wav',dur:0,when:'昨天 23:05',segs:0,
+ {id:'m4',short:'验收会议',tpl:'memo',title:'验收会议 · 周四 15:00',file:'asr-test.wav',dur:0,when:'昨天 23:05',segs:0,
   flow:{trans:{s:'run',note:'转写中 62%'},proof:{s:'todo'},under:{s:'todo'},doc:{s:'todo'}},
   turns:[]}
 ];
+
+/* 文体模板：一段录音可以按"用途"套不同的抽取 + 排版 + 处理开关 */
+var TPLS={
+  min:{name:'会议纪要',diar:true,detect:'像一场评审会'},
+  memo:{name:'速记卡',diar:true,detect:'像一段随口记录'},
+  diary:{name:'日记随笔',diar:false,detect:'像一段自述'},
+  qa:{name:'问答摘要',diar:true,detect:'像一次对话'}
+};
 
 var TERMS=[
  {from:'传行',to:'串行',n:1},
@@ -818,6 +867,7 @@ function renderHero(){
            '<div class="row"><span class="k">时长</span><span class="v mono">'+mm(m.dur)+'</span></div>'+
            '<div class="row"><span class="k">段落</span><span class="v">'+m.segs+' 段 · '+nSpk+' 位说话人</span></div>'+
            '<div class="row"><span class="k">时间</span><span class="v">'+esc(m.when)+'</span></div>'+
+           '<div class="row"><span class="k">文体</span><span class="v">'+esc(TPLS[m.tpl||'min'].name)+'</span></div>'+
            '<div class="note">原始上传已清理，留 16k 单声道存档</div>';
   $('#mtMeta').innerHTML=meta;
 }
@@ -844,7 +894,9 @@ function turnHtml(t,i){
   var rawView=S.view==='raw',txt=rawView?(t[5]||t[3]):t[3];
   var cls='turn'+(S.editing===i?' picked':'');
   var h='<article class="'+cls+'" data-i="'+i+'" data-od-id="turn-'+i+'">';
-  h+='<div class="who"><span class="dot" style="background:'+spkColor(t[0])+'"></span><b>'+esc(t[0])+'</b></div>';
+  var tpl=TPLS[(cur().tpl||'min')]||TPLS.min;
+  var who=tpl.diar?t[0]:'我';
+  h+='<div class="who">'+(tpl.diar?'<span class="dot" style="background:'+spkColor(t[0])+'"></span>':'')+'<b>'+esc(who)+'</b></div>';
   if(S.editing===i){
     h+='<div class="editor"><textarea id="editBox" aria-label="编辑这一段">'+esc(t[3])+'</textarea>'+
        '<div class="row"><button class="btn btn-sm btn-primary" data-act="save" data-i="'+i+'">保存</button>'+
@@ -888,7 +940,7 @@ function renderScript(){
 }
 function renderDrawer(){
   var m=cur();
-  $('#pane-min').innerHTML=minHtml(m);
+  $('#pane-min').innerHTML=tplbarHtml(m)+paperHtml(m);
   $('#pane-doc').innerHTML=docHtml(m);
   $('#pane-term').innerHTML=termHtml();
   $('#pane-job').innerHTML=jobHtml();
@@ -913,6 +965,64 @@ function minHtml(m){
    '</ul></section>'+
    '<section><h4>风险</h4><p>批量推理全量放开后用量可能翻倍；若预算未获批，需退回按周申请。'+ref(11)+'</p></section>'+
    '</div>';
+}
+function memoHtml(m){
+  return '<div class="paper memo">'+
+   '<div class="sub" style="margin-bottom:10px">'+esc(m.title)+' · '+esc(m.when)+' · 演示生成</div>'+
+   '<p class="lead">把静音阈值调到 1200 毫秒先灰度，别急着全量。</p>'+
+   '<div class="row" style="font-size:var(--cap);color:var(--muted);margin-bottom:4px">要点</div>'+
+   '<div class="act"><span class="who2">0:13</span><span>多人抢话时串行还没根治，先灰度观察一段时间</span></div>'+
+   '<div class="act"><span class="who2">0:52</span><span>首字延迟这两天从 1200 压到 780</span></div>'+
+   '<div class="act"><span class="who2">1:06</span><span>预算按 80 万报，超出部分留待调整</span></div>'+
+   '<div class="row" style="font-size:var(--cap);color:var(--muted);margin:16px 0 4px">我答应自己的事</div>'+
+   '<div class="act"><span class="box"></span><span>张明：出灰度对比数据（下周一）</span></div>'+
+   '<div class="act"><span class="box"></span><span>李经理：提预算表并抄送周敏（本周五）</span></div>'+
+   '<div class="act"><span class="box"></span><span>会后再看一眼串行问题有没有复现</span></div>'+
+   '</div>';
+}
+function diaryHtml(m){
+  return '<div class="paper diary">'+
+   '<div class="date">'+esc(m.when)+' · 演示生成</div>'+
+   '<h3>今天这场会拖得比预想久</h3>'+
+   '<div class="body">'+
+   '<p>开头我还在想上周那个串行的问题能不能一次说清，结果又被 VAD 切句打断了两次。李经理说得挺准：不是识别不行，是切得太碎。</p>'+
+   '<p>值得记下来的：静音阈值从 800 调到 1200，先灰度不直接全量。还有首字延迟这两天压到了 780，这个数比我预期好。</p>'+
+   '<p>预算按 80 万报。按现在的用量四季度刚好卡在线上，明年一月扩两条机柜就不够了——这事得早说，别等花超了再解释。</p>'+
+   '</div>'+
+   '<div class="moods"><span>VAD 参数</span><span>灰度</span><span>预算</span><span>一点烦躁</span></div>'+
+   '<div class="aside">还有一句没想明白的：真的需要那么多说话人吗，一个人讲清楚不行吗。</div>'+
+   '</div>';
+}
+function qaHtml(m){
+  return '<div class="paper qa">'+
+   '<div class="sub" style="margin-bottom:14px">'+esc(m.title)+' · '+esc(m.when)+' · 演示生成</div>'+
+   '<div class="q ask"><span class="who2">问</span><span class="say2">整体用下来还满意吗？有没有什么卡住的地方。</span></div>'+
+   '<div class="q"><span class="who2">答</span><span class="say2">满意。有一个小问题：导出报表的时候偶尔会转圈，转个三四秒就好了，不影响什么。</span></div>'+
+   '<div class="q ask"><span class="who2">问</span><span class="say2">明白，这个我们记一下，下个版本会优化。</span></div>'+
+   '<div class="q"><span class="who2">答</span><span class="say2">好，那我这边等更新。</span></div>'+
+   '<div class="gloss">'+
+   '<div><b>客户满意度</b><span>满意，仅报表导出性能一项待优化</span></div>'+
+   '<div><b>待办</b><span>下个版本优化导出报表性能</span></div>'+
+   '<div><b>术语</b><span>导出报表 / 首字延迟 / VAD 分段</span></div>'+
+   '</div>'+
+   '</div>';
+}
+function paperHtml(m){
+  var t=m.tpl||'min';
+  if(t==='memo')return memoHtml(m);
+  if(t==='diary')return diaryHtml(m);
+  if(t==='qa')return qaHtml(m);
+  return minHtml(m);
+}
+function tplbarHtml(m){
+  var cur=m.tpl||'min',h='<div class="tplbar">';
+  Object.keys(TPLS).forEach(function(k){
+    h+='<button data-tpl="'+k+'" aria-pressed="'+(k===cur?'true':'false')+'">'+TPLS[k].name+'</button>';
+  });
+  h+='</div><div class="tplnote"><span class="tag">自动识别</span>'+
+     '<span class="autodet">这段听起来'+TPLS[cur].detect+'</span>'+
+     '<span>· 换一种只是重排文稿，几秒钟</span></div>';
+  return h;
 }
 function docHtml(m){
   return '<div class="docitem"><div class="hd"><h4>会议纪要</h4><span class="badge">引用 11 处</span></div>'+
@@ -1115,6 +1225,16 @@ function bind(){
   $('#drawer').addEventListener('click',function(e){
     var cite=e.target.closest('cite[data-t]');
     if(cite){var i=+cite.dataset.t,t=turns()[i];if(t){closeDrawer();seekTo(t[1]);play();toast('回到第 '+(i+1)+' 段 · '+mm(t[1]));}return;}
+    var tb=e.target.closest('[data-tpl]');
+    if(tb){
+      var mm2=cur();
+      if(mm2.tpl!==tb.dataset.tpl){
+        mm2.tpl=tb.dataset.tpl;
+        renderScript();renderDrawer();
+        toast('已换成《'+TPLS[tb.dataset.tpl].name+'》，重排约 3 秒');
+      }
+      return;
+    }
     var b=e.target.closest('[data-act]');if(!b)return;
     var act=b.dataset.act;
     if(act==='editdoc'){toast('演示环境不进入在线编辑器');}
