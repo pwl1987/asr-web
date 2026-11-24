@@ -1,0 +1,1031 @@
+<!doctype html>
+<html lang="zh-CN" data-zcode-design>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>会议转写工作台 · 方向 A 工作台密度</title>
+<style>
+/* ══ 方向 A：暗色工作台。层级靠字号与留白，不靠盒子；accent 一处主操作 + 一处选中 ══ */
+:root{
+  --bg:#0d0f12;            /* 最深：导航与侧栏 */
+  --stage:#14171b;         /* 转写工作区（比导航亮一档，形成真实分区） */
+  --raise:#1a1e23;         /* 悬浮/输入控件 */
+  --raise-2:#212630;
+  --fg:#e9ecf1; --fg-2:#b7bfcb; --muted:#8d97a7;
+  --hair:rgba(255,255,255,.07); --hair-2:rgba(255,255,255,.13);
+  --accent:#57a6ff; --accent-ink:#08111c; --accent-dim:rgba(87,166,255,.16);
+  --ok:#4ec98c; --warn:#e0b268; --err:#f08b8b;
+  --s1:#6fa8ff; --s2:#4dbfa8; --s3:#dba756; --s4:#c884c0; --s5:#84bd6b; --s6:#95a3cc;
+  --ui:"PingFang SC","Noto Sans SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+  --serif:"Songti SC","Noto Serif CJK SC","Source Han Serif SC","SimSun",serif;
+  --num:"SF Mono",ui-monospace,Menlo,Consolas,monospace;
+  --cap:12px; --small:13px; --body:16px; --h3:20px; --h2:26px; --display:32px;
+  --s1p:4px; --s2:8px; --s3:12px; --s4:16px; --s5:24px; --s6:32px; --s7:48px;
+  --r:8px; --r-lg:12px;
+  --fast:100ms; --dur:150ms; --slow:240ms; --ease:cubic-bezier(.2,0,0,1);
+  --nav:236px; --side:344px;
+}
+*{box-sizing:border-box}
+[hidden]{display:none !important}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--ui);
+  font-size:var(--body);line-height:1.6;-webkit-font-smoothing:antialiased;font-variant-numeric:tabular-nums}
+button{font:inherit;color:inherit;background:none;border:none;cursor:pointer;padding:0}
+input,select,textarea{font:inherit;color:inherit}
+a{color:inherit}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+::selection{background:var(--accent-dim)}
+h1,h2,h3{margin:0;font-weight:600;line-height:1.22}
+p{margin:0}
+svg{display:block}
+.num{font-family:var(--num);font-variant-numeric:tabular-nums}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
+
+/* ── 控件：只有主操作用 accent，其余是文字/发丝边 ───────── */
+.act{display:inline-flex;align-items:center;gap:6px;min-height:28px;padding:0 10px;border-radius:var(--r);
+  font-size:var(--small);letter-spacing:.02em;color:var(--fg-2);border:1px solid var(--hair);background:var(--raise);
+  transition:background var(--fast) var(--ease),color var(--fast) var(--ease),border-color var(--fast) var(--ease),
+             transform var(--fast) var(--ease)}
+.act:hover:not(:disabled){background:var(--raise-2);color:var(--fg);border-color:var(--hair-2)}
+.act:active:not(:disabled){transform:translateY(1px)}
+.act:disabled{opacity:.4;cursor:not-allowed}
+.act.go{background:var(--accent);border-color:transparent;color:var(--accent-ink);font-weight:600;min-height:32px;padding:0 14px}
+.act.go:hover:not(:disabled){filter:brightness(1.08);color:var(--accent-ink)}
+.act.txt{border-color:transparent;background:none;color:var(--muted)}
+.act.txt:hover:not(:disabled){color:var(--fg);background:var(--raise)}
+.act[aria-pressed="true"]{color:var(--fg);border-color:var(--hair-2);background:var(--raise-2)}
+.act.sm{min-height:24px;padding:0 8px;font-size:var(--cap)}
+.act.dgr{color:var(--err);border-color:transparent;background:none}
+.act.dgr:hover:not(:disabled){background:rgba(240,139,139,.12)}
+.seg{display:inline-flex;gap:14px;align-items:center}
+.seg button{font-size:var(--small);color:var(--muted);letter-spacing:.02em;padding:4px 0;
+  border-bottom:1.5px solid transparent;transition:color var(--fast) var(--ease),border-color var(--fast) var(--ease)}
+.seg button[aria-selected="true"]{color:var(--fg);border-bottom-color:var(--accent);font-weight:600}
+.seg button:hover{color:var(--fg)}
+.fld{display:inline-flex;align-items:center;gap:8px;background:var(--raise);border:1px solid var(--hair);
+  border-radius:var(--r);padding:0 10px;min-height:32px;transition:border-color var(--fast) var(--ease)}
+.fld:focus-within{border-color:var(--hair-2)}
+.fld input{background:none;border:none;outline:none;min-width:0;flex:1;font-size:var(--small);padding:5px 0}
+.fld input::placeholder{color:var(--muted)}
+.fld svg{color:var(--muted);flex:none}
+select{background:var(--raise);border:1px solid var(--hair);border-radius:var(--r);
+  padding:5px 8px;font-size:var(--small);color:var(--fg-2)}
+kbd{font-family:var(--num);font-size:var(--cap);background:var(--raise-2);border:1px solid var(--hair-2);
+  border-bottom-width:2px;border-radius:4px;padding:1px 5px;color:var(--fg-2)}
+.hair-l{border-left:1px solid var(--hair)}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--ok);flex:none}
+.rot{width:12px;height:12px;border:1.8px solid var(--hair-2);border-top-color:var(--accent);border-radius:50%;
+  animation:sp .8s linear infinite;flex:none}
+@keyframes sp{to{transform:rotate(360deg)}}
+
+/* ── 骨架 ──────────────────────────────────────────── */
+.app{display:grid;grid-template-rows:auto minmax(0,1fr);height:100dvh}
+.bar{display:flex;align-items:center;gap:var(--s4);min-height:46px;padding:0 var(--s5);
+  background:var(--bg);border-bottom:1px solid var(--hair)}
+.bar .mark{font-size:var(--h3);letter-spacing:-.01em;font-weight:600}
+.bar .mark span{font-family:var(--num);font-size:var(--cap);color:var(--muted);letter-spacing:.08em;margin-left:8px;font-weight:400}
+.work{display:grid;grid-template-columns:var(--nav) minmax(0,1fr) var(--side);min-height:0}
+.nav,.stage,.side{min-height:0;overflow:auto;overscroll-behavior:contain}
+.nav{background:var(--bg);border-right:1px solid var(--hair);display:flex;flex-direction:column}
+.stage{background:var(--stage);display:flex;flex-direction:column}
+.side{background:var(--bg);border-left:1px solid var(--hair)}
+.navHead{padding:var(--s4) var(--s5) var(--s3);display:flex;flex-direction:column;gap:var(--s3);
+  position:sticky;top:0;background:var(--bg);z-index:3}
+.navHead .t{display:flex;align-items:baseline;gap:8px}
+.navHead h2{font-size:var(--small);color:var(--muted);letter-spacing:.06em;font-weight:600}
+.items{padding:0 var(--s5) var(--s5);display:flex;flex-direction:column;gap:1px}
+.item{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 10px;text-align:left;
+  padding:9px 12px;border-radius:var(--r);border-left:2px solid transparent;
+  transition:background var(--fast) var(--ease)}
+.item:hover{background:var(--raise)}
+.item[aria-current="true"]{background:var(--raise);border-left-color:var(--accent)}
+.item .n{font-size:var(--small);font-weight:600;color:var(--fg);grid-column:1;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.item .m{font-size:var(--cap);color:var(--muted);grid-column:1;letter-spacing:.01em;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.item .w{font-size:var(--cap);color:var(--muted);grid-column:2;grid-row:1;font-family:var(--num)}
+.item .pf{grid-column:1 / -1;display:flex;gap:2px;margin-top:7px;align-items:center}
+.item .pf i{height:2px;flex:1;border-radius:1px;background:var(--hair-2)}
+.item .pf i.d{background:var(--ok)}
+.item .pf i.p{background:var(--warn)}
+.item .pf i.n{background:var(--accent)}
+.item .pf em{font-style:normal;font-size:var(--cap);color:var(--muted);margin-left:6px;font-family:var(--num)}
+.navFoot{margin-top:auto;position:sticky;bottom:0;background:var(--bg);border-top:1px solid var(--hair);
+  padding:var(--s3) var(--s5) var(--s4);display:flex;flex-direction:column;gap:2px}
+.navFoot .l{display:flex;align-items:center;gap:8px;font-size:var(--cap);color:var(--muted);
+  padding:5px 0;text-align:left;width:100%}
+.navFoot .l:hover{color:var(--fg)}
+.navFoot .l b{margin-left:auto;font-weight:400;color:var(--fg-2);font-family:var(--num)}
+
+/* ── 工作区头：会议名是唯一主角 ───────────────────────── */
+.head{padding:var(--s6) var(--s7) var(--s4);position:sticky;top:0;z-index:6;background:var(--stage);
+  border-bottom:1px solid var(--hair)}
+.head .k{display:flex;align-items:center;gap:10px;font-size:var(--cap);color:var(--muted);
+  letter-spacing:.02em;margin-bottom:var(--s3)}
+.head h1{font-size:var(--h2);letter-spacing:-.015em;font-weight:600}
+.head h1 input{font:inherit;letter-spacing:inherit;color:inherit;background:none;border:1px solid transparent;
+  border-radius:5px;padding:0 4px;margin-left:-4px;width:100%}
+.head h1 input:hover{border-color:var(--hair)}
+.head h1 input:focus{border-color:var(--hair-2);background:var(--raise)}
+.head .meta{display:flex;align-items:center;gap:var(--s4);flex-wrap:wrap;margin-top:var(--s3);
+  font-size:var(--cap);color:var(--muted)}
+.head .meta .num{color:var(--fg-2)}
+.ply{display:flex;align-items:center;gap:var(--s4);margin-top:var(--s5)}
+.ply .btn{width:34px;height:34px;border-radius:50%;background:var(--fg);color:var(--bg);display:grid;
+  place-items:center;flex:none;transition:transform var(--fast) var(--ease),filter var(--fast) var(--ease)}
+.ply .btn:hover{filter:brightness(.9)}.ply .btn:active{transform:scale(.94)}
+.ply .tc{font-family:var(--num);font-size:var(--small);color:var(--fg-2);white-space:nowrap}
+.ply .tc em{font-style:normal;color:var(--muted)}
+.wav{flex:1;min-width:60px;height:26px;position:relative;cursor:pointer;border-radius:3px}
+.wav svg{width:100%;height:100%}
+.wav .b{fill:rgba(255,255,255,.2)}
+.wav .q{fill:rgba(255,255,255,.07)}
+.wav .pl{position:absolute;top:-2px;bottom:-2px;width:1.5px;background:var(--accent);left:0}
+.wav:hover .b{fill:rgba(255,255,255,.3)}
+.ply .tl{display:flex;align-items:center;gap:var(--s2);flex:none}
+
+/* 工具行 */
+.tools{display:flex;align-items:center;gap:var(--s4);padding:var(--s3) var(--s7);
+  border-bottom:1px solid var(--hair);position:sticky;top:var(--headH,196px);z-index:5;background:var(--stage)}
+.tools .grow{flex:1;min-width:120px}
+.tools .lbl{font-size:var(--cap);color:var(--muted);letter-spacing:.02em}
+
+/* ── 转写正文：不用行盒，靠字号/留白/一条发丝线 ───────── */
+.tx{padding:var(--s6) var(--s7) var(--s7);max-width:88ch}
+.grp{margin-bottom:var(--s6)}
+.grp .who{display:flex;align-items:center;gap:8px;margin-bottom:var(--s2)}
+.grp .who i{width:7px;height:7px;border-radius:50%;background:var(--sp);flex:none}
+.grp .who .nm{font-size:var(--cap);letter-spacing:.06em;color:var(--sp);font-weight:600;
+  background:none;border:1px solid transparent;border-radius:4px;padding:1px 4px;margin-left:-4px}
+.grp .who .nm:hover{background:var(--raise);border-color:var(--hair)}
+.grp .who .nm:hover{text-decoration:underline;text-decoration-style:dotted;cursor:text}
+.grp .who .n2{font-size:var(--cap);color:var(--muted);font-family:var(--num)}
+.ln{display:grid;grid-template-columns:46px minmax(0,1fr) 56px 44px;gap:var(--s3);align-items:baseline;
+  padding:3px 0;border-radius:5px;transition:background var(--fast) var(--ease)}
+.ln:hover{background:var(--raise)}
+.ln.now{background:var(--raise)}
+.ln.now .tc2{color:var(--fg)}
+.ln .tc2{font-family:var(--num);font-size:var(--cap);color:var(--muted);text-align:right;cursor:pointer;
+  letter-spacing:.01em;user-select:none}
+.ln .tc2:hover{color:var(--fg-2)}
+.ln .bd{font-size:var(--body);line-height:1.75;color:var(--fg);word-break:break-word;cursor:text;
+  text-indent:-.9em;padding-left:.9em}
+.dense .tx{--body:14px}
+.dense .grp{margin-bottom:var(--s5)}
+.ln .bd .or{font-size:var(--cap);color:var(--muted);white-space:nowrap}
+.ln .bd .or s{text-decoration:line-through;text-decoration-color:rgba(240,139,139,.5)}
+.ln .bd mark{background:rgba(224,178,104,.28);border-radius:2px;padding:0 1px}
+.ln .fix{font-size:var(--cap);color:var(--muted);text-align:right;letter-spacing:.01em}
+.ln .fix.h{color:var(--warn)}
+.ln .fix.l{color:var(--s2)}
+.ln .fix.u{color:var(--warn)}
+.ln .ops{grid-column:3;display:none;gap:2px;justify-content:flex-end}
+.ln:hover .ops,.ln:focus-within .ops{display:flex}
+.ln:hover .fix,.ln:focus-within .fix{display:none}
+.ed{grid-column:2 / -1;margin-top:var(--s2);background:var(--raise);border:1px solid var(--hair-2);
+  border-radius:var(--r-lg);padding:var(--s3);display:flex;flex-direction:column;gap:var(--s2)}
+.ed textarea{width:100%;min-height:80px;background:var(--bg);border:1px solid var(--hair);border-radius:6px;
+  padding:9px 11px;font-size:var(--small);line-height:1.7;resize:vertical;outline:none}
+.ed textarea:focus{border-color:var(--hair-2)}
+.ed .r{display:flex;align-items:center;gap:var(--s2);flex-wrap:wrap}
+.picked{grid-column:1;align-self:center;width:16px;height:16px;accent-color:var(--accent)}
+.dotted{text-decoration:underline dotted;text-underline-offset:3px;text-decoration-color:var(--hair-2)}
+
+/* ── 侧栏：流程用发丝连线，不用卡片汤 ─────────────────── */
+.sideH{padding:var(--s4) var(--s5) var(--s2);display:flex;align-items:baseline;gap:8px}
+.sideH h2{font-size:var(--small);color:var(--muted);letter-spacing:.06em;font-weight:600}
+.flow{padding:0 var(--s5)}
+.st{position:relative;display:grid;grid-template-columns:20px minmax(0,1fr);gap:var(--s3);
+  padding:var(--s3) 0 var(--s4)}
+.st::before{content:"";position:absolute;left:9.5px;top:34px;bottom:-6px;width:1px;background:var(--hair)}
+.st:last-child::before{display:none}
+.st .ic{width:20px;height:20px;border-radius:50%;border:1px solid var(--hair-2);display:grid;place-items:center;
+  background:var(--bg);color:var(--muted);z-index:1}
+.st.done .ic{border-color:rgba(78,201,140,.5);color:var(--ok)}
+.st.part .ic{border-color:rgba(224,178,104,.5);color:var(--warn)}
+.st.run .ic{border-color:rgba(87,166,255,.55);color:var(--accent)}
+.st .n{font-size:var(--small);font-weight:600;color:var(--fg)}
+.st .d{font-size:var(--cap);color:var(--muted);margin-top:3px;line-height:1.55}
+.st .d b{color:var(--fg-2);font-weight:600}
+.st .a{margin-top:var(--s2);display:flex;gap:var(--s2);flex-wrap:wrap;align-items:center}
+.job{margin:0 var(--s5) var(--s4);padding:var(--s3) 0 0;border-top:1px solid var(--hair)}
+.job .r{display:flex;align-items:center;gap:8px;font-size:var(--cap);color:var(--muted)}
+.job .r b{color:var(--fg);font-weight:600;font-size:var(--small)}
+.job .r .sp{flex:1}
+.job .pb{height:2px;background:var(--hair-2);border-radius:1px;margin:var(--s3) 0;overflow:hidden}
+.job .pb i{display:block;height:100%;background:var(--accent);transition:width var(--dur) var(--ease)}
+.tabs{display:flex;gap:var(--s4);padding:var(--s3) var(--s5);border-top:1px solid var(--hair);
+  border-bottom:1px solid var(--hair);position:sticky;top:0;background:var(--bg);z-index:2}
+.tabs button{font-size:var(--small);color:var(--muted);padding:2px 0 7px;border-bottom:1.5px solid transparent;
+  letter-spacing:.02em}
+.tabs button[aria-selected="true"]{color:var(--fg);border-bottom-color:var(--accent);font-weight:600}
+.tabs .c{font-family:var(--num);font-size:var(--cap);color:var(--muted);margin-left:5px}
+.sBody{padding:var(--s5)}
+.sec{margin-bottom:var(--s5)}
+.sec h3{font-size:var(--cap);letter-spacing:.06em;color:var(--muted);font-weight:600;margin-bottom:var(--s3)}
+.row{font-size:var(--small);line-height:1.65;color:var(--fg-2);padding:var(--s2) 0;
+  border-bottom:1px solid var(--hair)}
+.row:last-child{border-bottom:none}
+.row .hd{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}
+.row .hd b{color:var(--fg);font-weight:600;flex:1;min-width:55%}
+.row .mo{font-size:var(--cap);color:var(--muted);margin-top:3px;display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.row .mo em{font-style:normal;color:var(--fg-2)}
+.rf{font-family:var(--num);font-size:var(--cap);color:var(--fg-2);border:1px solid var(--hair);
+  border-radius:999px;padding:0 7px;line-height:17px;display:inline-block;cursor:pointer;
+  transition:border-color var(--fast) var(--ease),color var(--fast) var(--ease)}
+.rf:hover{border-color:var(--accent);color:var(--accent)}
+table.tb{width:100%;border-collapse:collapse;font-size:var(--small)}
+table.tb th{text-align:left;font-size:var(--cap);color:var(--muted);font-weight:500;letter-spacing:.02em;
+  padding:0 8px 6px 0;border-bottom:1px solid var(--hair)}
+table.tb td{padding:8px 8px 8px 0;border-bottom:1px solid var(--hair);color:var(--fg-2);vertical-align:top}
+table.tb td.own{color:var(--fg);white-space:nowrap}
+table.tb tr:last-child td{border-bottom:none}
+/* 材料（成品）：这一栏里唯一用衬线的地方 */
+.paper{background:var(--raise);border:1px solid var(--hair);border-radius:var(--r-lg);
+  padding:var(--s5) var(--s5) var(--s6);font-family:var(--serif);line-height:1.85}
+.paper h1{font-size:var(--h3);letter-spacing:-.01em;font-weight:600;margin-bottom:4px}
+.paper .sub{font-family:var(--ui);font-size:var(--cap);color:var(--muted);letter-spacing:.02em;
+  padding-bottom:var(--s4);margin-bottom:var(--s4);border-bottom:1px solid var(--hair)}
+.paper h2{font-family:var(--ui);font-size:var(--cap);letter-spacing:.06em;color:var(--muted);
+  font-weight:600;margin:var(--s5) 0 var(--s2)}
+.paper p,.paper li{font-size:var(--small);color:var(--fg)}
+.paper ul,.paper ol{margin:0 0 var(--s3);padding-left:1.35em}
+.paper li{margin-bottom:5px}
+.paper .rf{font-family:var(--num);vertical-align:.12em;margin-left:3px}
+.dbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:var(--s3)}
+.dbar .sp{flex:1}
+.drow{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--hair);
+  font-size:var(--small);cursor:pointer}
+.drow:last-child{border-bottom:none}
+.drow:hover .t{color:var(--accent)}
+.drow .t{flex:1;min-width:0;font-weight:600;color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.drow .w{font-size:var(--cap);color:var(--muted);font-family:var(--num)}
+
+/* ── 五态 ─────────────────────────────────────────── */
+.load{background:var(--raise);border-radius:4px;background-image:linear-gradient(90deg,rgba(255,255,255,.03),
+  rgba(255,255,255,.07),rgba(255,255,255,.03));background-size:200% 100%;animation:sh 1.4s var(--ease) infinite}
+@keyframes sh{to{background-position:-200% 0}}
+.empty{border:1px dashed var(--hair-2);border-radius:var(--r-lg);padding:var(--s6) var(--s5);
+  display:flex;flex-direction:column;align-items:flex-start;gap:var(--s2)}
+.empty h3{font-size:var(--h3);letter-spacing:-.01em}
+.empty p{font-size:var(--small);color:var(--muted);max-width:44ch}
+.err{display:flex;gap:10px;align-items:flex-start;background:rgba(240,139,139,.09);
+  border:1px solid rgba(240,139,139,.3);border-radius:var(--r-lg);padding:var(--s3) var(--s4)}
+.err .t{font-size:var(--small);font-weight:600;color:var(--err)}
+.err .d{font-size:var(--cap);color:var(--fg-2);margin-top:3px;line-height:1.6}
+.err .a{display:flex;gap:8px;align-items:center;margin-top:var(--s3);flex-wrap:wrap}
+.err .ag{font-size:var(--cap);color:var(--muted);font-family:var(--num)}
+.banner{display:flex;align-items:center;gap:10px;font-size:var(--small);color:var(--fg-2);
+  background:var(--raise);border:1px solid var(--hair);border-left:2px solid var(--warn);
+  border-radius:var(--r);padding:9px var(--s3);margin-bottom:var(--s4);flex-wrap:wrap}
+.tip{display:flex;gap:8px;align-items:flex-start;font-size:var(--cap);color:var(--muted);line-height:1.6}
+.tip svg{margin-top:2px;flex:none}
+
+/* ── 抽屉 / 弹层 / toast ───────────────────────────── */
+.scrim{position:fixed;inset:0;background:rgba(5,6,8,.62);z-index:40;opacity:0;pointer-events:none;
+  transition:opacity var(--slow) var(--ease)}
+.scrim.on{opacity:1;pointer-events:auto}
+.sheet{position:fixed;z-index:50;background:var(--bg);border:1px solid var(--hair-2);box-shadow:0 18px 48px rgba(0,0,0,.5);
+  display:none}
+.sheet.open{display:block;animation:in var(--slow) var(--ease)}
+@keyframes in{from{opacity:0;transform:translateY(8px)}}
+.sheet.dr{top:0;bottom:0;right:0;width:min(440px,94vw);border-right:none;animation:dr var(--slow) var(--ease)}
+@keyframes dr{from{transform:translateX(24px);opacity:0}}
+.sheet.md{top:50%;left:50%;transform:translate(-50%,-50%);width:min(560px,92vw);border-radius:var(--r-lg);
+  max-height:84vh;overflow:auto}
+.sheet .sh{display:flex;align-items:center;gap:var(--s3);padding:var(--s4) var(--s5);border-bottom:1px solid var(--hair);
+  position:sticky;top:0;background:var(--bg);z-index:1}
+.sheet .sh h2{font-size:var(--h3);letter-spacing:-.01em;flex:1}
+.sheet .sb{padding:var(--s5)}
+.tr{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--hair);font-size:var(--small)}
+.tr:last-of-type{border-bottom:none}
+.tr .w{color:var(--muted)}
+.tr .w s{text-decoration:line-through;text-decoration-color:rgba(240,139,139,.5)}
+.tr .sp{flex:1}
+.pv{background:var(--raise);border:1px solid var(--hair);border-radius:var(--r);padding:var(--s2) var(--s3);
+  margin-top:var(--s3);font-size:var(--cap);color:var(--fg-2);max-height:184px;overflow:auto}
+.pv li{list-style:none;margin:5px 0;line-height:1.6}
+.pv .to{color:var(--ok)}
+.pv .dl{color:var(--muted);text-decoration:line-through;text-decoration-color:rgba(240,139,139,.5)}
+.kb{display:grid;grid-template-columns:auto 1fr;gap:9px 16px;font-size:var(--small);align-items:center}
+.toast{position:fixed;left:50%;bottom:26px;transform:translate(-50%,10px);z-index:60;display:flex;align-items:center;
+  gap:10px;background:var(--raise-2);border:1px solid var(--hair-2);border-radius:999px;padding:7px 8px 7px 15px;
+  font-size:var(--small);opacity:0;pointer-events:none;box-shadow:0 12px 32px rgba(0,0,0,.45);
+  transition:opacity var(--slow) var(--ease),transform var(--slow) var(--ease);max-width:min(540px,92vw)}
+.toast.on{opacity:1;transform:translate(-50%,0);pointer-events:auto}
+.toast.er{border-color:rgba(240,139,139,.5)}
+
+/* ── 响应式：1279 收侧栏 → 抽屉；1023 收导航 → 抽屉；759 手机 ── */
+@media (max-width:1279px){
+  .work{grid-template-columns:var(--nav) minmax(0,1fr)}
+  .side{position:fixed;top:0;bottom:0;right:0;width:min(440px,94vw);z-index:50;border-left:1px solid var(--hair-2);
+    transform:translateX(102%);transition:transform var(--slow) var(--ease)}
+  .side.open{transform:none}
+  #sideBtn{display:inline-flex}
+}
+@media (min-width:1280px){#sideBtn,.sideClose{display:none}}
+@media (max-width:1279px){.side:not(.open){display:none}}
+@media (max-width:1023px){.nav:not(.open){display:none}}
+@media (max-width:1023px){
+  .work{grid-template-columns:minmax(0,1fr)}
+  .nav{position:fixed;top:0;bottom:0;left:0;width:min(300px,88vw);z-index:50;border-right:1px solid var(--hair-2);
+    transform:translateX(-102%);transition:transform var(--slow) var(--ease)}
+  .nav.open{transform:none}
+  #navBtn{display:inline-flex}
+  .head,.tools,.tx{padding-left:var(--s5);padding-right:var(--s5)}
+}
+@media (max-width:759px){
+  .bar{padding:0 var(--s4);gap:var(--s3);min-height:46px;flex-wrap:nowrap}
+  .bar .mark,.bar #gpuChip{display:none}
+  .act.go{padding:0 12px;font-size:var(--cap)}
+  .head{padding:var(--s5) var(--s4) var(--s4)}
+  .head h1{font-size:var(--h3)}
+  .tools{padding:var(--s3) var(--s4);gap:var(--s3);top:var(--headH2,172px)}
+  .tx{padding:var(--s5) var(--s4) var(--s7)}
+  .ln{grid-template-columns:38px minmax(0,1fr);row-gap:2px}
+  .ln .fix{grid-column:2;text-align:left}
+  .ln .ops{grid-column:2;justify-content:flex-start;display:flex}
+  .act{min-height:32px}
+  .act.sm{min-height:30px;padding:0 10px}
+  .rf{padding:3px 8px}
+  .ln .tc2{padding:5px 0}
+  .grp .who .nm{min-height:24px}
+  .tabs button{padding:6px 0 10px}
+  .app{grid-template-rows:auto minmax(0,1fr) auto}
+  .mb{display:grid;grid-template-columns:repeat(3,1fr);background:var(--bg);border-top:1px solid var(--hair);
+    padding:0 var(--s4) env(safe-area-inset-bottom)}
+  .mb button{display:flex;flex-direction:column;align-items:center;gap:3px;min-height:50px;padding:8px 4px;
+    font-size:var(--cap);color:var(--muted);letter-spacing:.02em}
+  .mb button[aria-current="page"]{color:var(--fg)}
+  .toast{bottom:72px}
+  .ply{flex-wrap:wrap}
+  .ply .wav{min-width:110px;order:3}
+  .ply .tl{width:100%;justify-content:flex-end;order:4}
+  .tools{gap:var(--s2) var(--s3)}
+}
+.mb{display:none}
+@media (min-width:1024px){#navBtn{display:none}}
+.ply .tl>*,.tools>*{white-space:nowrap}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.01ms !important;animation-iteration-count:1 !important;
+    transition-duration:.01ms !important}
+  .load{animation:none}.rot{animation-duration:1.1s !important;animation-iteration-count:infinite !important}
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="bar" data-od-id="bar" data-full-bleed>
+    <button class="act txt sm" id="navBtn" aria-label="打开会议列表">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h10"/></svg>会议</button>
+    <div class="mark">会议转写工作台<span>ASR-WEB</span></div>
+    <span style="flex:1"></span>
+    <span class="seg" id="gpuChip" style="gap:8px"><span class="dot" aria-hidden="true"></span><span class="lbl" style="font-size:var(--cap);color:var(--muted)">模型就绪 · 仅本地 GPU2</span></span>
+    <button class="act txt" id="helpBtn" aria-label="快捷键">?</button>
+    <button class="act txt" id="sideBtn">流程</button>
+    <button class="act go" id="pipeBtn">一键出纪要</button>
+  </header>
+
+  <div class="work">
+    <!-- 导航：会议列表 -->
+    <aside class="nav" id="nav" data-od-id="nav" data-full-bleed aria-label="会议列表">
+      <div class="navHead">
+        <div class="t"><h2>会议</h2><span style="flex:1"></span><span class="lbl" id="mCount" style="font-size:var(--cap);color:var(--muted)"></span></div>
+        <label class="fld"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></svg>
+          <input id="q" type="search" placeholder="标题 / 文件名 / 转写内容" aria-label="搜索会议"></label>
+        <div class="tip" style="gap:8px">
+          <button class="act sm" id="upBtn" style="width:100%;justify-content:center">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M12 19V7M6 12l6-6 6 6"/></svg>上传录音</button>
+        </div>
+        <div class="up" id="upBox" hidden>
+          <div class="tip"><span id="upName">meeting.wav</span><span style="flex:1"></span><span class="num" id="upPct">0%</span></div>
+          <div class="job"><div class="pb" style="margin:6px 0 0"><i id="upBar" style="width:0"></i></div></div>
+        </div>
+      </div>
+      <div class="items" id="items" role="list"></div>
+      <div class="navFoot">
+        <button class="l" id="termBtn2">术语表与全文替换 <b id="termN2">0</b></button>
+        <button class="l" id="helpBtn2">快捷键 <b>?</b></button>
+        <div id="demoSlot"></div>
+      </div>
+    </aside>
+
+    <!-- 工作区 -->
+    <main class="stage" id="stage" data-od-id="stage">
+      <section class="head" id="head" aria-live="polite"></section>
+
+      <div class="tools" id="tools" data-od-id="tools">
+        <div class="seg" role="tablist" aria-label="转写视图">
+          <button role="tab" aria-selected="true" id="vP">校对视图</button>
+          <button role="tab" aria-selected="false" id="vR">原始稿</button>
+        </div>
+        <label class="fld grow"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></svg>
+          <input id="sq" type="search" placeholder="本场转写里找，回车跳下一处" aria-label="搜索片段"></label>
+        <button class="act txt sm" id="fU" aria-pressed="false">只看未校对 <span class="num" id="unfN">0</span></button>
+        <select id="fS" aria-label="按说话人过滤"></select>
+        <button class="act txt sm" id="fB" aria-pressed="false">批量改派</button>
+        <button class="act txt sm" id="den" aria-pressed="false">紧凑</button>
+      </div>
+
+      <div id="banner"></div>
+      <section class="tx" id="tx" data-od-id="transcript"></section>
+    </main>
+
+    <!-- 侧栏 -->
+    <aside class="side" id="side" data-od-id="side" aria-label="流程与材料">
+      <div class="sideH"><h2>流程</h2><span style="flex:1"></span>
+        <button class="act txt sm sideClose" id="sideClose" aria-label="关闭流程面板">收起</button></div>
+      <div class="flow" id="flow"></div>
+      <div class="job" id="jobBox" hidden>
+        <div class="r"><b id="jobT">一键出纪要</b><span class="sp"></span><span class="num" id="jobTime">0s</span></div>
+        <div class="pb"><i id="jobBar" style="width:0"></i></div>
+        <div class="r" id="jobD">准备中…</div>
+        <div class="r" style="margin-top:10px">
+          <button class="act sm" id="jobX">取消（当前批结束后）</button>
+          <button class="act txt sm" id="jobHide">后台运行</button></div>
+      </div>
+      <div class="tabs" role="tablist" aria-label="整理结果">
+        <button role="tab" aria-selected="true" id="tU">理解</button>
+        <button role="tab" aria-selected="false" id="tD">材料<span class="c" id="docN">0</span></button>
+        <button role="tab" aria-selected="false" id="tH">任务</button>
+      </div>
+      <div class="sBody" id="sBody"></div>
+    </aside>
+  </div>
+
+  <nav class="mb" id="mb" data-full-bleed data-audit-skip aria-label="视图切换">
+    <button id="mN" aria-current="page">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M4 9h16"/></svg>会议</button>
+    <button id="mT">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 6h16M4 11h16M4 16h11"/></svg>转写</button>
+    <button id="mS">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M6 3h9l4 4v14H6z"/><path d="M9 12h7M9 16h7"/></svg>流程</button>
+  </nav>
+</div>
+
+<div class="scrim" id="scrim"></div>
+
+<section class="sheet dr" id="termSheet" role="dialog" aria-modal="true" aria-labelledby="tsT" data-od-id="terms">
+  <div class="sh"><h2 id="tsT">术语表与全文替换</h2>
+    <button class="act txt" data-close aria-label="关闭">关闭</button></div>
+  <div class="sb" id="tsBody"></div>
+</section>
+
+<section class="sheet md" id="helpSheet" role="dialog" aria-modal="true" aria-labelledby="hpT">
+  <div class="sh"><h2 id="hpT">键盘操作</h2><button class="act txt" data-close aria-label="关闭">关闭</button></div>
+  <div class="sb">
+    <div class="kb">
+      <kbd>空格</kbd><span>播放 / 暂停</span>
+      <kbd>J</kbd><span>下一段并跳播</span>
+      <kbd>K</kbd><span>上一段并跳播</span>
+      <kbd>E</kbd><span>改写当前段（<kbd>⌘ ⏎</kbd> 保存，<kbd>Esc</kbd> 放弃）</span>
+      <kbd>⌘ ⏎</kbd><span>跑一键出纪要</span>
+      <kbd>/</kbd><span>在本场转写里搜索</span>
+      <kbd>?</kbd><span>打开本页</span>
+    </div>
+  </div>
+</section>
+
+<section class="sheet md" id="whySheet" role="dialog" aria-modal="true" aria-labelledby="whT">
+  <div class="sh"><h2 id="whT">方向 A 的设计判断</h2><button class="act txt" data-close aria-label="关闭">关闭</button></div>
+  <div class="sb" id="whBody"></div>
+</section>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script>
+/* ══ 演示数据（取自线上「验收会议」真实句子的改写；原型不接后端） ══ */
+var SPK={1:{n:'主持人',c:'var(--s1)',i:'主'},2:{n:'张明 · 算法',c:'var(--s2)',i:'张'},3:{n:'李经理',c:'var(--s3)',i:'李'}};
+var SEGS=[
+ {id:1,s:1,t:0,x:'那个，我们今天先过两件小事：上版遗留问题，还有年底算力预算。',o:null,b:'llm'},
+ {id:2,s:1,t:7,x:'请相关同学把结论直接记在待办里，散会我就不单独发了。',o:null,b:null},
+ {id:3,s:2,t:13,x:'我先说遗留问题：语音识别在多人抢话时还会串行。',o:'语音识别在多人抢话时还会传输。',b:'llm'},
+ {id:4,s:3,t:21,x:'这个我们复现过，主要是 VAD 分段太激进，把半句话切断了。',o:null,b:null},
+ {id:5,s:2,t:29,x:'对，我们把静音阈值从 800 毫秒调到 1200 毫秒，效果就好很多。',o:'我们把静音阈值从八百毫秒吊到一千两百毫秒',b:'human'},
+ {id:6,s:1,t:38,x:'那这个算通过了还是只是建议？',o:null,b:'llm'},
+ {id:7,s:3,t:42,x:'建议先按这个参数上线灰度，别直接全量。',o:null,b:'llm'},
+ {id:8,s:2,t:48,x:'同意。灰度两天，我看识别错误率和首字延迟。',o:null,b:null},
+ {id:9,s:1,t:55,x:'好，记一条：VAD 参数灰度两天，张明负责，周五看结果。',o:null,b:'llm'},
+ {id:10,s:3,t:63,x:'另外，年底的算力采购要走招标，我下周一给预算数。',o:'年底的算力采购要走招标，我下周1给预算数。',b:'llm'},
+ {id:11,s:2,t:71,x:'预算里记得留扩容，明年还有两个模型要上。',o:null,b:null},
+ {id:12,s:1,t:76,x:'还有 4090 那批卡的到货时间要确认。',o:null,b:'llm'},
+ {id:13,s:3,t:81,x:'供应商说十二月初，这个我不敢保证。',o:null,b:null},
+ {id:14,s:1,t:85,x:'那先记待确认。今天就到这，谢谢大家。',o:null,b:'llm'}];
+var MEETS=[
+ {id:'m1',ti:'产品评审会 · 第三会议室',f:'meeting.wav',d:87,sn:14,sp:3,w:'今天 14:05',
+  st:{a:'done',p:'part',u:'done',c:'done'},status:'done'},
+ {id:'m4',ti:'客户回访（转写中）',f:'call-1144.m4a',d:412,sn:0,sp:0,w:'今天 15:40',
+  st:{a:'run',p:'none',u:'none',c:'none'},status:'processing'},
+ {id:'m3',ti:'Q4 算力预算沟通（长会）',f:'q4-budget.mp3',d:3542,sn:302,sp:5,w:'11/21 10:12',
+  st:{a:'done',p:'none',u:'none',c:'none'},status:'done'},
+ {id:'m2',ti:'验收会议',f:'asr-test.wav',d:16,sn:6,sp:1,w:'昨天 23:05',
+  st:{a:'done',p:'done',u:'done',c:'done'},status:'done'}];
+var UNDER={topic:'VAD 参数灰度与年底算力预算',
+ dec:[{t:'VAD 静音阈值按 1200ms 上线灰度两天',o:'张明',d:'周五',r:[5,8,9]},
+      {t:'年底算力采购走招标流程',o:'李经理',d:'下周一给预算',r:[10]}],
+ sug:[{t:'先灰度、不直接全量，观察识别错误率与首字延迟',r:[7,8]}],
+ unc:[{t:'4090 那批卡的到货时间（供应商口头说十二月初）',r:[12,13]},
+      {t:'明年要上的两个模型是否占用同一批卡',r:[11]}]};
+var DOCS={m1:[
+ {id:'d2',k:'会议纪要',ti:'产品评审会纪要',w:'12 分钟前',stale:true,
+  head:{au:'参会人与分管领导',wd:'约 420 字',to:'中性、事实优先'},
+  bo:'# 产品评审会纪要\n\n## 一、会议信息\n2026 年 11 月 24 日 14:05，第三会议室，3 人参加。核心议题两件事：上一版遗留的抢话串行问题，以及年底算力采购预算。[#1]\n\n## 二、结论\n1. VAD 静音阈值由 800 毫秒调整为 1200 毫秒，多人抢话导致的串行明显减少。[#3][#5]\n2. 该参数先上线灰度两天，不直接全量；观察指标为识别错误率与首字延迟。[#7][#8]\n3. 年底算力采购走招标流程，预算数下周一给出。[#10]\n\n## 三、待办\n| 事项 | 负责人 | 期限 | 依据 |\n| --- | --- | --- | --- |\n| VAD 参数灰度两天并看指标 | 张明 | 周五 | [#9] |\n| 提交算力采购预算数 | 李经理 | 下周一 | [#10] |\n\n## 四、待确认\n- 4090 那批卡的到货时间，供应商口头答复十二月初，尚未书面确认。[#12][#13]\n- 明年计划上的两个模型是否与本批卡共用，需与平台侧确认。[#11]\n'},
+ {id:'d1',k:'完整文字稿',ti:'产品评审会 · 全文稿',w:'12 分钟前',stale:false,head:{},
+  bo:'# 产品评审会 · 全文稿\n\n**主持人**：那个，我们今天先过两件小事……[#1]\n\n**张明 · 算法**：我先说遗留问题：语音识别在多人抢话时还会串行。[#3]\n'}],
+ m2:[],m3:[],m4:[]};
+var TERMS=[['串行','传输'],['招标','招标'],['张明','张民'],['VAD','PAD'],['首字延迟','首字延识'],['灰度','灰度']];
+
+/* ══ 状态 ══ */
+var S={mid:'m1',view:'p',play:false,t:0,sp:1,follow:true,dense:false,unfixed:false,spk:'',q:'',hit:-1,
+  bulk:false,pick:{},edit:null,state:'pop',tab:'u',docId:null,docEdit:false,staleSeg:0};
+var $=function(i){return document.getElementById(i)};
+function esc(t){return String(t==null?'':t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+function mm(s){s=Math.max(0,Math.round(s));return Math.floor(s/60)+':'+('0'+(s%60)).slice(-2)}
+function hh(s){var h=Math.floor(s/3600),m=Math.floor(s%3600/60),x=Math.round(s%60);
+  return h?h+':'+('0'+m).slice(-2)+':'+('0'+x).slice(-2):m+':'+('0'+x).slice(-2)}
+function M(){for(var i=0;i<MEETS.length;i++)if(MEETS[i].id===S.mid)return MEETS[i]}
+function SG(){if(S.mid==='m1')return SEGS;
+  if(S.mid==='m2')return SEGS.slice(0,3).map(function(v,i){return {id:900+i,s:1,t:i*6,
+    x:['嗯，','那个，我们今天下午三点在第三会议室召开产品评审会。','请相关同学准时参加。'][i],
+    o:i===1?'那个我们今天下午三点。':null,b:i===1?'human':null}});
+  var n=S.mid==='m3'?302:0,o=[];
+  for(var i=0;i<n;i++)o.push({id:i+1,s:(i%5)+1,t:i*11.7,
+    x:'第 '+(i+1)+' 条转写，用来验证长会议在滚动、过滤、紧凑模式下的排版边界：包括很长的中文句子不加标点一直写下去的情况，以及英文与数字混排 like 1200ms / 4090 / VAD。',
+    o:i%7===0?'第'+(i+1)+'条（未校对原始结果）':null,b:i%7===0?null:(i%3===0?'llm':'human')});
+  return o}
+function SGM(){var m=M(),u=SG();return m.id==='m1'?u.filter(function(v){return !v.b}).length:u.filter(function(v){return !v.b}).length}
+function spk(i){return SPK[i]||{n:'说话人'+i,c:'var(--s6)',i:String(i)}}
+function DC(){return DOCS[S.mid]||(DOCS[S.mid]=[])}
+function cur(){var a=DC();if(!a.length)return null;for(var i=0;i<a.length;i++)if(a[i].id===S.docId)return a[i];return a[0]}
+
+/* ══ 导航 ══ */
+function navRender(){
+  var q=($('q').value||'').trim().toLowerCase(),h='',n=0;
+  MEETS.forEach(function(m){
+    var ok=!q||(m.ti+' '+m.f).toLowerCase().indexOf(q)>=0||(q.length>1&&m.id==='m1'&&SG().join(' ').toLowerCase().indexOf(q)>=0);
+    if(!ok)return;n++;
+    var u=SGM();
+    var pf=['a','p','u','c'].map(function(k){var v=m.st[k];
+      return '<i class="'+(v==='done'?'d':v==='part'?'p':v==='run'?'n':'')+'"></i>'}).join('');
+    h+='<button class="item" role="listitem" data-id="'+m.id+'" aria-current="'+(m.id===S.mid)+'">'+
+      '<span class="n">'+esc(m.ti)+'</span><span class="w">'+esc(m.w)+'</span>'+
+      '<span class="m">'+esc(m.f)+' · '+m.sn+' 段'+(u?' · <span style="color:var(--warn)">未校 '+u+'</span>':'')+'</span>'+
+      '<span class="pf">'+pf+'</span></button>';});
+  $('items').innerHTML=h||'<div class="empty" style="padding:var(--s5) var(--s4)"><h3 style="font-size:var(--small)">没有匹配的会议</h3>'+
+    '<p style="font-size:var(--cap)">「'+esc(q)+'」在标题、文件名和转写内容里都没查到，试试更短的词。</p>'+
+    '<button class="act sm" id="clrQ">清空搜索</button></div>';
+  $('mCount').textContent=MEETS.length+' 场';$('unfN').textContent=SGM();$('termN2').textContent=TERMS.length;
+  $('docN').textContent=DC().length;
+}
+
+/* ══ 会议头 + 播放器 ══ */
+function flowLine(){/* 步骤之间用间距分隔，不用低对比斜杠 */
+  var m=M(),nm={a:'\u8f6c\u5199',p:'\u6821\u5bf9',u:'\u7406\u89e3',c:'\u6750\u6599'};
+  var sub={a:m.st.a==='run'?'ASR \u5904\u7406\u4e2d\uff08\u4e0d\u53ef\u4e2d\u65ad\uff09':esc(m.f),
+    p:m.st.p==='none'?SGM()+' \u6bb5\u5168\u90e8\u672a\u6821':m.st.p==='part'?'\u8fd8\u5dee '+SGM()+' \u6bb5':m.st.p==='done'?'\u5df2\u6821\u5b8c':'\u672a\u5f00\u59cb',
+    u:m.st.u==='done'?UNDER.dec.length+' \u51b3\u5b9a \u00b7 '+UNDER.unc.length+' \u5f85\u786e\u8ba4':'\u672a\u751f\u6210',
+    c:DC().length?DC().length+' \u4efd \u00b7 \u6700\u65b0 '+DC()[0].w:'\u672a\u751f\u6210'};
+  return ['a','p','u','c'].map(function(k,i){var v=m.st[k];
+    var ic=v==='done'?'<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--ok)" stroke-width="2.6" stroke-linecap="round"><path d="m5 13 4.5 4.5L19 7"/></svg>'
+      :v==='part'?'<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--warn)" stroke-width="2.6" stroke-linecap="round"><path d="M12 7v5l3.5 2"/></svg>'
+      :v==='run'?'<span class="rot" style="width:10px;height:10px;display:inline-block;vertical-align:-1px"></span>'
+      :'<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="8"/></svg>';
+    return '<span style="display:inline-flex;align-items:center;gap:6px">'+ic+
+      '<b style="color:var(--fg-2);font-weight:600">'+nm[k]+'</b><span>'+sub[k]+'</span>'+
+      (i<3?'<span style="width:8px" aria-hidden="true"></span>':'')+'</span>';}).join('');
+}
+function headRender(){
+  var m=M();
+  $('head').innerHTML='<div class="k" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">'+flowLine()+'</div>'+
+    '<h1><input id="ti" value="'+esc(m.ti)+'" aria-label="\u4f1a\u8bae\u6807\u9898\uff0c\u53ef\u76f4\u63a5\u4fee\u6539"></h1>'+
+    '<div class="meta"><span class="num">'+esc(m.f)+'</span><span>'+hh(m.d)+' \u00b7 '+m.sn+' \u6bb5 \u00b7 '+m.sp+' \u4f4d\u8bf4\u8bdd\u4eba</span>'+
+    '<span>\u539f\u59cb\u4e0a\u4f20\u5df2\u6e05\u7406 \u00b7 \u7559 16k \u5355\u58f0\u9053\u5b58\u6863</span></div>'+
+    '<div class="ply"><button class="btn" id="pl" aria-label="\u64ad\u653e\u6216\u6682\u505c\uff08\u7a7a\u683c\uff09">'+
+      '<svg id="iP" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l11-6.5z"/></svg>'+
+      '<svg id="iQ" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" hidden><path d="M7 5h3.4v14H7zM13.6 5H17v14h-3.4z"/></svg></button>'+
+      '<span class="tc"><span id="tN">0:00</span> <em>/ '+mm(m.d)+'</em></span>'+
+      '<div class="wav" id="wv" role="slider" tabindex="0" aria-label="\u64ad\u653e\u8fdb\u5ea6\uff0c\u70b9\u51fb\u6216\u5de6\u53f3\u952e\u8df3\u8f6c" aria-valuemin="0" aria-valuemax="'+Math.round(m.d)+'" aria-valuenow="0"><div class="pl" id="pl2"></div></div>'+
+      '<div class="tl"><button class="act txt sm" data-seek="-5" aria-label="\u540e\u9000 5 \u79d2">\u22125s</button>'+
+      '<button class="act txt sm" data-seek="5" aria-label="\u524d\u8fdb 5 \u79d2">+5s</button>'+
+      '<button class="act txt sm" id="spd" aria-label="\u500d\u901f">1\u00d7</button>'+
+      '<button class="act txt sm" id="fol" aria-pressed="true">\u8ddf\u968f\u64ad\u653e</button></div></div>';
+  $('ti').onchange=function(){m.ti=this.value.trim()||m.ti;navRender();toast('\u6807\u9898\u5df2\u66f4\u65b0',{u:0})};
+  $('pl').onclick=function(){play()};$('spd').onclick=cycSpd;
+  $('fol').onclick=function(){S.follow=!S.follow;this.setAttribute('aria-pressed',S.follow)};
+  $('wv').onclick=function(e){var r=this.getBoundingClientRect();seek((e.clientX-r.left)/r.width*m.d);play(1)};
+  $('wv').onkeydown=function(e){if(e.key==='ArrowLeft'){seek(S.t-5);e.preventDefault()}
+    if(e.key==='ArrowRight'){seek(S.t+5);e.preventDefault()}};
+  document.querySelectorAll('[data-seek]').forEach(function(b){b.onclick=function(){seek(S.t+ +this.dataset.seek)}});
+  wave();syncSticky();
+}
+function syncSticky(){var h=$('head').offsetHeight;document.documentElement.style.setProperty('--headH',h+'px');
+  document.documentElement.style.setProperty('--headH2',h+'px')}
+
+/* 波形：按片段实际时长绘制，静音段留空 */
+function wave(){
+  var m=M(),a=SG(),w=Math.min(Math.ceil(m.d/0.5),420),parts=[];
+  for(var i=0;i<w;i++){var t=i*(m.d/w),inS=false;
+    for(var j=0;j<a.length;j++){var s0=a[j].t,s1=(j+1<a.length?a[j+1].t:m.d);if(t>=s0&&t<s1){inS=true;break}}
+    var e=inS?(0.3+0.7*Math.abs(Math.sin(i*1.7)*0.55+Math.sin(i*0.41)*0.45)):0.08;
+    var h=Math.max(2,Math.round(e*22));
+    parts.push('<rect class="'+(inS?'b':'q')+'" x="'+(i*(420/w))+'" y="'+((26-h)/2)+'" width="'+(420/w*.6)+'" height="'+h+'" rx="'+(420/w*.3)+'"/>');}
+  var o=$('wv').querySelector('svg');if(o)o.remove();
+  $('wv').insertAdjacentHTML('afterbegin','<svg viewBox="0 0 420 26" preserveAspectRatio="none">'+parts.join('')+'</svg>');
+}
+
+/* ══ 转写正文 ══ */
+function vis(){var a=SG();
+  if(S.unfixed)a=a.filter(function(v){return !v.b});
+  if(S.spk)a=a.filter(function(v){return String(v.s)===S.spk});
+  if(S.q)a=a.filter(function(v){return (v.x+' '+(v.o||'')).toLowerCase().indexOf(S.q.toLowerCase())>=0});
+  return a}
+function hl(t){t=esc(t);if(!S.q)return t;var i=t.toLowerCase().indexOf(S.q.toLowerCase());
+  if(i<0)return t;return t.slice(0,i)+'<mark>'+t.slice(i,i+S.q.length)+'</mark>'+t.slice(i+S.q.length)}
+function skel(n){var o='';for(var i=0;i<n;i++)o+='<div style="margin-bottom:var(--s6)">'+
+  '<div class="load" style="width:70px;height:11px;margin-bottom:10px"></div>'+
+  '<div class="load" style="width:'+(74-i*6)+'%;height:15px;margin-bottom:7px"></div>'+
+  '<div class="load" style="width:'+(46-i*4)+'%;height:15px"></div></div>';return o}
+function txRender(){
+  var m=M(),c=cur(),box=$('tx'),bn=$('banner');
+  if(m.status==='processing'){
+    bn.innerHTML='<div class="banner" style="border-left-color:var(--accent)"><span class="rot"></span>'+
+      '<span style="flex:1">ASR 正在解码与识别：'+hh(m.d)+' 录音，预计还需 <b class="num">40 秒</b>。此阶段不可中断，可以先把别的会传上来。</span></div>';
+    box.innerHTML=skel(5);return;}
+  bn.innerHTML=S.state==='err'
+    ?'<div class="banner" style="border-left-color:var(--err)"><b style="color:var(--err)">片段读取失败</b>'+
+     '<span>服务器 500：数据库被其他任务占用。你已改的 '+S.staleSeg+' 段都还在。</span>'+
+     '<button class="act sm" id="rt">立即重试</button>'+
+     '<span style="font-size:var(--cap);color:var(--muted)" class="num">上次尝试 8 秒前</span></div>'
+    :S.staleSeg?'<div class="banner"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--warn)" stroke-width="1.9" stroke-linecap="round"><path d="M12 9v4M12 16h.01"/><circle cx="12" cy="12" r="9"/></svg>'+
+      '<span style="flex:1">转写文本刚被改过 <b class="num">'+S.staleSeg+'</b> 段，材料里的结论可能已过期。</span>'+
+      '<button class="act sm" id="reGen">用最新校对重出材料</button><button class="act txt sm" id="keep">先不动</button></div>':'';
+  if($('rt'))$('rt').onclick=function(){S.state='load';txRender();setTimeout(function(){S.state='pop';txRender()},700)};
+  if($('reGen'))$('reGen').onclick=function(){startJob()};
+  if($('keep'))$('keep').onclick=function(){S.staleSeg=0;txRender()};
+  if(S.state==='err')return;
+  if(S.state==='load'){box.innerHTML=skel(4);return}
+  var a=vis();
+  if(!a.length){
+    box.innerHTML='<div class="empty"><h3>'+(S.q||S.spk||S.unfixed?'没有符合条件的片段':'这场会还没有片段')+'</h3>'+
+      '<p>'+(S.q?'「'+esc(S.q)+'」在本场 '+m.sn+' 段转写里没命中，试试只搜人名或专名的前两个字。'
+        :S.unfixed?'所有片段都已校对，不需要补缺。':'转写完成后，片段会按说话人分块出现在这里；点任意一句即可从该处回听。')+'</p>'+
+      '<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="act sm" id="cF">清除筛选</button>'+
+      (S.unfixed?'<button class="act go" id="fA">补缺 '+SGM()+' 段</button>':'')+'</div></div>';
+    $('cF').onclick=function(){S.q='';S.spk='';S.unfixed=false;$('sq').value='';renderAll()};
+    if($('fA'))$('fA').onclick=function(){startJob()};
+    return;}
+  var h='',last=null;
+  a.forEach(function(v){
+    var p=spk(v.s),now=c&&c.id===v.id;
+    if(v.s!==last){
+      if(last!==null)h+='</div>';
+      h+='<div class="grp" style="--sp:'+p.c+'"><div class="who"><i aria-hidden="true"></i>'+
+        '<button class="nm" data-rn="'+v.s+'" title="点击改名">'+esc(p.n)+'</button>'+
+        '<span class="n2">'+mm(v.t)+'</span></div>';
+      last=v.s;}
+    var show=S.view==='p'?v.x:(v.o||v.x);
+    var tail=S.view==='p'&&v.o?' <span class="or">原 <s>'+esc(v.o)+'</s></span>':'';
+    var fx=S.view==='p'?(v.b?'<span class="fix '+(v.b==='human'?'h':'l')+'">'+(v.b==='human'?'人工':'LLM')+'</span>'
+      :'<span class="fix u">未校对</span>'):'<span class="fix">原始</span>';
+    h+='<div class="ln'+(now?' now':'')+'" id="ln-'+v.id+'" data-id="'+v.id+'">'+
+      (S.bulk?'<input class="picked" type="checkbox" data-pk="'+v.id+'" '+(S.pick[v.id]?'checked':'')+' aria-label="选择第 '+v.id+' 段">'
+             :'<span class="tc2" data-tk="'+v.t+'" title="从 '+mm(v.t)+' 回听">'+mm(v.t)+'</span>')+
+      '<span class="bd" data-p="'+v.t+'" title="点击从此刻播放">'+hl(show)+tail+'</span>'+fx+
+      '<span class="ops"><button class="act txt sm" data-ed="'+v.id+'" aria-label="改写这一段（E）">改</button></span></div>';
+    if(S.edit===v.id)
+      h+='<div class="ln"><span></span><div class="ed"><textarea id="ta" aria-label="改写内容">'+esc(v.x)+'</textarea>'+
+        '<div class="r"><button class="act go" data-sv="'+v.id+'">保存</button>'+
+        '<button class="act txt" data-cx="'+v.id+'">放弃</button>'+
+        '<span style="font-size:var(--cap);color:var(--muted);margin-left:auto">只写人工修正层，原始转写不动</span></div></div></div>';
+  });
+  box.innerHTML=h+'</div>';
+}
+
+/* ══ 侧栏：流程 + 理解 / 材料 / 任务 ══ */
+function flowRender(){
+  var m=M(),u=SG();
+  var rows=[
+    {k:'p',n:'忠实校对',v:m.st.p,
+     d:m.st.p==='none'?'<b>'+SGM()+'</b> 段全部未校 · 只写修正层，不覆盖「人工」'
+       :m.st.p==='part'?'<b>'+SGM()+'</b> / '+u.length+' 段未校 · 不覆盖「人工」'
+       :'已校完 · 重跑也不覆盖标「人工」的段',
+     a:m.st.p==='none'?'<button class="act go sm" id="gP">开始校对</button>'
+       :m.st.p==='part'?'<button class="act go sm" id="gP">补缺 '+SGM()+' 段</button>'
+       :'<button class="act sm" id="gP">整体重校</button>'},
+    {k:'u',n:'会议理解',v:m.st.u,
+     d:m.st.u==='done'?UNDER.dec.length+' 决定 · '+UNDER.sug.length+' 建议 · '+UNDER.unc.length+' 待确认（建议≠通过）'
+       :'抽主题/决定/建议/待办，每条带来源片段',
+     a:'<button class="act '+(m.st.u==='done'?'':'go ')+'sm" id="gU">'+(m.st.u==='done'?'重新生成':'生成理解')+'</button>'},
+    {k:'c',n:'正式材料',v:m.st.c,
+     d:DC().length?DC().length+' 份 · 最新 '+DC()[0].w:'纪要/汇报四种体裁 · 可导出 Word',
+     a:'<button class="act '+(DC().length?'':'go ')+'sm" id="gC">'+(DC().length?'再生成一份':'生成材料')+'</button>'}];
+  $('flow').innerHTML=rows.map(function(r){
+    var ic=r.v==='done'?'<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="m5 13 4.5 4.5L19 7"/></svg>'
+      :r.v==='part'?'<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 7v5l3.5 2"/></svg>'
+      :r.v==='run'?'<span class="rot" style="width:10px;height:10px"></span>'
+      :'<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="8"/></svg>';
+    return '<div class="st '+r.v+'"><span class="ic">'+ic+'</span><span>'+
+      '<span class="n">'+r.n+'</span><span class="d">'+r.d+'</span><span class="a">'+r.a+'</span></span></div>';}).join('');
+  $('gP').onclick=function(){startJob()};
+  $('gU').onclick=function(){startJob('u')};
+  $('gC').onclick=function(){openSide();S.tab='c';sideRender()};
+}
+function sideRender(){
+  ['tU','tD','tH'].forEach(function(id){$(id).setAttribute('aria-selected',
+    (id==='tU'&&S.tab==='u')||(id==='tD'&&S.tab==='c')||(id==='tH'&&S.tab==='h'))});
+  var b=$('sBody'),m=M();
+  if(S.tab==='h'){
+    b.innerHTML='<div class="sec"><h3>本场的 AI 任务</h3>'+
+      [['校对 14 段 · 6.2s','完成','14:12'],['会议理解 · 9.1s','完成','14:12'],
+       ['纪要生成 · 5.8s','完成','14:13'],['理解（第一次）· 12.4s','已取消','14:09']]
+      .map(function(r){return '<div class="drow"><span class="t" style="font-weight:400">'+esc(r[0])+'</span>'+
+        '<span style="font-size:var(--cap);color:'+(r[1]==='已取消'?'var(--muted)':'var(--ok)')+'">'+esc(r[1])+'</span>'+
+        '<span class="w">'+esc(r[2])+'</span></div>'}).join('')+
+      '</div><p class="tip"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/></svg>取消只停未完成的批次，已完成批次保留并回填。</p>';
+    return;}
+  if(S.tab==='u'){
+    if(m.st.u!=='done'){b.innerHTML='<div class="empty"><h3>还没有会议理解</h3>'+
+      '<p>主题、决定、建议、待办、待确认会逐条抽出，每条都标来源片段，点引用即可回听；输出截断时自动二分重试。</p>'+
+      '<button class="act go" id="gU2">生成会议理解</button></div>';$('gU2').onclick=function(){startJob('u')};return}
+    var it=function(o){return '<div class="row"><div class="hd"><b>'+esc(o.t)+'</b></div>'+
+      '<div class="mo">'+(o.o?'<span>负责人 <em>'+esc(o.o)+'</em></span>':'')+(o.d?'<span>期限 <em>'+esc(o.d)+'</em></span>':'')+rf(o.r)+'</div></div>'};
+    var sec=function(t,arr){return arr.length?'<div class="sec"><h3>'+t+'</h3>'+arr.map(it).join('')+'</div>':''};
+    b.innerHTML='<div class="sec"><h3>主题</h3><div style="font-size:var(--body);color:var(--fg);line-height:1.6">'+
+        esc(UNDER.topic)+'</div></div>'+
+      sec('决定（已达成）',UNDER.dec)+sec('建议（未拍板）',UNDER.sug)+
+      '<div class="sec"><h3>待办</h3><table class="tb"><thead><tr><th>事项</th><th>负责人</th><th>期限</th><th>依据</th></tr></thead><tbody>'+
+      UNDER.dec.map(function(d){return '<tr><td>'+esc(d.t)+'</td><td class="own">'+esc(d.o)+
+        '</td><td class="num">'+esc(d.d)+'</td><td>'+rf(d.r)+'</td></tr>'}).join('')+'</tbody></table></div>'+
+      sec('待确认（别写进结论）',UNDER.unc);
+    bindRef(b);return;}
+  var d=cur();
+  if(!d){b.innerHTML='<div class="empty"><h3>还没有材料</h3>'+
+    '<p>选好体裁与受众就能生成；每个结论都带片段依据，可点开回听，也能在线编辑保留旧版本。</p>'+
+    '<button class="act go" id="gC2">生成材料</button></div>';
+    $('gC2').onclick=function(){startJob('c')};return}
+  b.innerHTML=(d.stale?'<div class="banner" style="margin-bottom:var(--s4)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--warn)" stroke-width="1.9" stroke-linecap="round"><path d="M12 9v4M12 16h.01"/><circle cx="12" cy="12" r="9"/></svg>'+
+      '<span style="flex:1">校对结果在这份材料之后又变了（<b class="num">+3 段</b>人工修改）。</span>'+
+      '<button class="act sm" id="rg">重出</button><button class="act txt sm" id="ko">先保留</button></div>':'')+
+    '<div class="dbar"><span class="act txt sm" style="border:1px solid var(--hair);pointer-events:none">'+esc(d.k)+'</span>'+
+    '<span style="font-size:var(--cap);color:var(--muted)" class="num">'+esc(d.w)+'</span><span class="sp"></span>'+
+    '<button class="act sm" id="eD">'+(S.docEdit?'收起':'编辑')+'</button><button class="act sm" id="cD">复制</button>'+
+    '<button class="act sm" id="mD">MD</button><button class="act go sm" id="wD">Word</button></div>'+
+    (S.docEdit?'<textarea class="ed2" id="dTa" style="width:100%;min-height:46vh;background:var(--raise);border:1px solid var(--hair-2);border-radius:var(--r-lg);padding:var(--s4);font-family:var(--num);font-size:var(--small);line-height:1.7;color:var(--fg);resize:vertical">'+esc(d.bo)+'</textarea>'+
+      '<div style="display:flex;gap:8px;margin-top:var(--s3);align-items:center"><button class="act go" id="sD">保存为新版本</button>'+
+      '<button class="act txt" id="xD">取消</button><span style="font-size:var(--cap);color:var(--muted);margin-left:auto">旧版本留在历史</span></div>'
+      :'<div class="paper">'+docHtml(d)+'</div>')+
+    '<div class="sec" style="margin-top:var(--s5)"><h3>本场其他材料</h3>'+
+      DC().map(function(x){return '<div class="drow" data-dc="'+x.id+'"><span class="t">'+esc(x.k)+' · '+esc(x.ti)+'</span>'+
+        '<span class="w">'+esc(x.w)+'</span></div>'}).join('')+'</div>';
+  bindRef(b);
+  document.querySelectorAll('[data-dc]').forEach(function(e){e.onclick=function(){S.docId=this.dataset.dc;S.docEdit=false;sideRender()}});
+  $('eD').onclick=function(){S.docEdit=!S.docEdit;sideRender()};
+  $('cD').onclick=function(){toast('已复制到剪贴板（原型模拟）',{u:0})};
+  $('mD').onclick=function(){toast('下载 .md（原型模拟）',{u:0})};
+  $('wD').onclick=function(){toast('正在生成 Word… 约 37KB',{u:0})};
+  if($('sD'))$('sD').onclick=function(){var x=cur();x.bo=$('dTa').value;x.stale=false;S.docEdit=false;
+    var a=DC();a.unshift({id:'d'+Date.now(),k:x.k+'（手改）',ti:x.ti,w:'刚刚',stale:false,head:{},bo:x.bo});
+    S.docId=a[0].id;navRender();sideRender();flowRender();toast('已存为新版本，旧版仍在历史里')};
+  if($('xD'))$('xD').onclick=function(){S.docEdit=false;sideRender()};
+  if($('rg'))$('rg').onclick=function(){startJob()};
+  if($('ko'))$('ko').onclick=function(){cur().stale=false;sideRender()};
+}
+function rf(rs){return (rs||[]).map(function(i){return '<button class="rf" data-rf="'+i+'">#'+i+'</button>'}).join('')}
+function bindRef(root){root.querySelectorAll('[data-rf]').forEach(function(e){
+  e.onclick=function(){seek(+this.dataset.rf);play(1);openSideKeep()}})}
+function docHtml(d){
+  var L=d.bo.split('\n'),o=[],i=0;
+  function inl(t){return esc(t).replace(/\[#(\d+)\]/g,function(_,n){return '<button class="rf" data-rf="'+n+'">#'+n+'</button>'})}
+  while(i<L.length){var l=L[i];
+    if(!l.trim()){i++;continue}
+    if(l.indexOf('# ')===0){o.push('<h1>'+inl(l.slice(2))+'</h1>');
+      var h=d.head||{};o.push('<div class="sub">'+[h.au,h.wd,h.to].filter(Boolean).map(esc).join(' · ')+'</div>');i++;continue}
+    if(l.indexOf('## ')===0){o.push('<h2>'+inl(l.slice(3))+'</h2>');i++;continue}
+    if(l.charAt(0)==='|'){var tb=[],j=i;
+      while(j<L.length&&L[j].charAt(0)==='|'){if(L[j].indexOf('---')<0){var cs=L[j].split('|').slice(1,-1).map(function(c){return c.trim()});
+        tb.push('<tr>'+cs.map(function(c){return '<td>'+inl(c)+'</td>'}).join('')+'</tr>')}j++}
+      o.push('<table class="tb"><tbody>'+tb.join('')+'</tbody></table>');i=j;continue}
+    if(/^([-*]|\d+\.)\s/.test(l)){var its=[];
+      while(i<L.length&&/^([-*]|\d+\.)\s/.test(L[i])){its.push(L[i].replace(/^([-*]|\d+\.)\s/,''));i++}
+      o.push((l.charAt(0)==='-'?'<ul>':'<ol>')+its.map(function(x){return '<li>'+inl(x)+'</li>'}).join('')+(l.charAt(0)==='-'?'</ul>':'</ol>'));continue}
+    o.push('<p>'+inl(l)+'</p>');i++}
+  return o.join('')}
+
+/* ══ 播放器（模拟时钟；落地接 /api/tasks/{id}/audio） ══ */
+var tm=null;
+function play(on){S.play=on===undefined?!S.play:on;
+  if($('iP'))$('iP').hidden=S.play;if($('iQ'))$('iQ').hidden=!S.play;
+  clearInterval(tm);
+  if(S.play)tm=setInterval(function(){var m=M();S.t+=0.1*S.sp*10;
+    if(S.t>=M().d){S.t=M().d;play(0)}tick()},100);}
+function cycSpd(){var a=[1,1.25,1.5,2],i=(a.indexOf(S.sp)+1)%a.length;S.sp=a[i];
+  $('spd').textContent=(a[i]===1?'1':a[i].toFixed(2).replace(/0+$/,''))+'×'}
+function seek(x){S.t=Math.max(0,Math.min(M().d,x));tick()}
+function tick(){var m=M(),c=cur();
+  if($('tN'))$('tN').textContent=mm(S.t);
+  if($('pl2'))$('pl2').style.left=(S.t/m.d*100)+'%';
+  if($('wv'))$('wv').setAttribute('aria-valuenow',Math.round(S.t));
+  document.querySelectorAll('.ln.now').forEach(function(e){e.classList.remove('now')});
+  if(c&&c.b!==undefined||c){var el=$('ln-'+c.id);
+    if(el){el.classList.add('now');if(S.follow&&S.play)el.scrollIntoView({block:'nearest',behavior:'smooth'})}}}
+
+/* ══ job ══ */
+function jobRender(t){$('jobBox').hidden=false;$('jobT').textContent=t||'一键出纪要'}
+function startJob(kind){
+  openSide();jobRender(kind==='u'?'仅会议理解':kind==='c'?'仅材料生成':'一键出纪要');
+  var st=kind==='u'?[['会议理解',9]]:kind==='c'?[['材料生成',6]]:[['忠实校对 '+SGM()+' 段',6],['会议理解',9],['材料生成',6]];
+  var tot=st.reduce(function(a,b){return a+b[1]},0),e=0,i=0,bar=$('jobBar');
+  clearInterval(bar._t);
+  bar._t=setInterval(function(){e+=0.35;var p=Math.min(1,e/tot);
+    bar.style.width=(p*100)+'%';$('jobTime').textContent=Math.round(e)+'s / 约 '+tot+'s';
+    $('jobD').textContent=st[i][0]+' · 第 '+(i+1)+'/'+st.length+' 步';
+    if(p>=1&&i<st.length-1)i++;
+    if(e>=tot){clearInterval(bar._t);
+      var m=M();m.st.p='done';if(kind!=='c')m.st.u='done';m.st.c='done';m.status='done';
+      if(kind!=='c'){m.sn=Math.max(m.sn,SG().length);m.st.p='done';
+        SG().forEach(function(v){if(!v.b){v.b='llm';if(!v.o)v.o=v.x}});}
+      var d=cur();if(d)d.stale=false;else{var a=DC();a.unshift({id:'d'+Date.now(),k:'会议纪要',ti:m.ti+'纪要',
+        w:'刚刚',stale:false,head:{au:'参会人',wd:'约 420 字',to:'中性、事实优先'},
+        bo:'# '+m.ti+'纪要\\n\\n## 一、会议信息\\n由一键流水线生成；正文与依据在落地后由模型填写。[#1]\\n\\n## 二、结论\\n- 结论条目待接入真实数据后生成。[#2]\\n'});
+        S.docId=a[0].id}
+      S.staleSeg=0;$('jobBox').hidden=true;S.tab='c';renderAll();
+      toast('纪要已生成 · 511 字 / 10 处依据',{u:0})}},200);}
+$('jobX').onclick=function(){clearInterval($('jobBar')._t);$('jobBox').hidden=true;
+  toast('已取消：已完成批次保留，未跑部分可再补缺',{u:0})};
+$('jobHide').onclick=function(){$('jobBox').hidden=true;closeOver()};
+
+/* ══ toast ══ */
+var tt=null;
+function toast(msg,o){o=o||{};var t=$('toast');t.className='toast on'+(o.e?' er':'');
+  t.innerHTML='<span style="flex:1">'+esc(msg)+'</span>'+(o.u===0?'':
+    '<button class="act sm" id="tU">撤销</button><button class="act txt sm" id="tX" aria-label="关闭提示">关闭</button>');
+  clearTimeout(tt);tt=setTimeout(function(){t.classList.remove('on')},5200);
+  if($('tU'))$('tU').onclick=function(){t.classList.remove('on');toast('已撤销',{u:0})};
+  if($('tX'))$('tX').onclick=function(){t.classList.remove('on')};
+  t.onmouseenter=function(){clearTimeout(tt)};t.onmouseleave=function(){tt=setTimeout(function(){t.classList.remove('on')},2200)}}
+
+/* ══ 抽屉 ══ */
+function openSide(){if(window.matchMedia('(max-width:1279px)').matches){$('side').classList.add('open');$('scrim').classList.add('on')}}
+function openSideKeep(){}
+function closeOver(){$('side').classList.remove('open');$('nav').classList.remove('open');
+  ['termSheet','helpSheet','whySheet'].forEach(function(i){$(i).classList.remove('open')});$('scrim').classList.remove('on')}
+$('scrim').onclick=closeOver;$('sideClose').onclick=closeOver;
+document.querySelectorAll('[data-close]').forEach(function(b){b.onclick=closeOver});
+$('sideBtn').onclick=function(){$('side').classList.toggle('open');$('scrim').classList.toggle('on',$('side').classList.contains('open'))};
+$('navBtn').onclick=function(){$('nav').classList.toggle('open');$('scrim').classList.toggle('on',$('nav').classList.contains('open'))};
+function sheet(id){closeOver();$(id).classList.add('open');$('scrim').classList.add('on')}
+$('helpBtn').onclick=function(){sheet('helpSheet')};$('helpBtn2').onclick=function(){sheet('helpSheet')};
+$('termBtn2').onclick=function(){sheet('termSheet');termRender()};
+function termRender(){
+  $('tsBody').innerHTML='<div class="tip"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/></svg>'+
+    '<span>术语表对新任务做热词、对校对结果做确定性纠正；全文替换只改人工修正层，原始转写永远不动。</span></div>'+
+    '<h3 style="font-size:var(--cap);letter-spacing:.06em;color:var(--muted);margin:var(--s5) 0 var(--s3);font-weight:600">本场全文替换</h3>'+
+    '<div style="display:flex;gap:8px;flex-wrap:wrap"><label class="fld" style="flex:1;min-width:130px"><input id="rF" type="text" placeholder="原文 / 错写" aria-label="替换来源"></label>'+
+    '<label class="fld" style="flex:1;min-width:130px"><input id="rT" type="text" placeholder="替换为" aria-label="替换目标"></label></div>'+
+    '<div class="pv" id="rP" hidden></div>'+
+    '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:var(--s3)">'+
+    '<button class="act" id="rPv">预览命中</button><button class="act go" id="rAp" disabled>替换全部</button>'+
+    '<label class="act txt sm" style="cursor:pointer"><input type="checkbox" id="rST" checked style="accent-color:var(--accent)"> 同时存为术语</label>'+
+    '<button class="act txt" id="rUn" hidden>撤销这次替换</button></div>'+
+    '<div style="font-size:var(--cap);color:var(--muted);margin-top:var(--s2)" id="rMsg"></div>'+
+    '<h3 style="font-size:var(--cap);letter-spacing:.06em;color:var(--muted);margin:var(--s6) 0 var(--s3);font-weight:600">全局术语表</h3>'+
+    '<div id="tL">'+(TERMS.length?TERMS.map(function(t,i){return '<div class="tr"><span class="w"><s>'+esc(t[1])+'</s></span>'+
+      '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="1.9" stroke-linecap="round"><path d="M5 12h14M14 7l5 5-5 5"/></svg>'+
+      '<span>'+esc(t[0])+'</span><span class="sp"></span><button class="act txt sm" data-tm="'+i+'" aria-label="删除术语">删除</button></div>'}).join('')
+      :'<p style="font-size:var(--small);color:var(--muted)">还没有术语。把反复写错的人名、专名存进来，以后不用每场都改。</p>')+'</div>'+
+    '<div style="display:flex;gap:8px;margin-top:var(--s3);flex-wrap:wrap">'+
+    '<label class="fld" style="flex:1;min-width:120px"><input id="tW" type="text" placeholder="错写 / 旧写法" aria-label="术语错写"></label>'+
+    '<label class="fld" style="flex:1;min-width:120px"><input id="tR" type="text" placeholder="正确写法" aria-label="术语正确写法"></label>'+
+    '<button class="act" id="tAd">添加</button></div>';
+  $('rPv').onclick=function(){var f=$('rF').value.trim(),t=$('rT').value.trim(),p=$('rP');
+    if(!f||!t){p.hidden=false;p.innerHTML='<li>请同时填「原文」和「替换为」。</li>';$('rAp').disabled=true;return}
+    var hs=SG().filter(function(v){return v.x.indexOf(f)>=0});
+    p.hidden=false;p.innerHTML='<li>命中 <b>'+hs.length+'</b> 段（原始转写不动）：</li>'+hs.slice(0,6).map(function(v){
+      return '<li><span class="num" style="color:var(--muted)">#'+v.id+'</span> '+esc(v.x.replace(f,'§')).replace('§','<span class="to">'+esc(t)+'</span>')+'</li>'}).join('');
+    $('rAp').disabled=!hs.length};
+  $('rAp').onclick=function(){var f=$('rF').value.trim(),t=$('rT').value.trim(),k=0;
+    SG().forEach(function(v){if(v.x.indexOf(f)>=0){v.x=v.x.split(f).join(t);v.b='human';k++}});
+    if($('rST').checked)TERMS.unshift([t,f]);S.staleSeg+=k;$('rUn').hidden=false;
+    termRender();renderAll();toast('已替换 '+k+' 段')};
+  $('rUn').onclick=function(){toast('已撤销：3 段恢复原值与来源',{u:0});$('rUn').hidden=true};
+  $('tAd').onclick=function(){var w=$('tW').value.trim(),r=$('tR').value.trim();
+    if(!w||!r){toast('两端都要填：错写 → 正确写法',{e:1,u:0});return}
+    TERMS.unshift([r,w]);termRender();navRender();toast('已加入术语表')};
+  document.querySelectorAll('[data-tm]').forEach(function(b){b.onclick=function(){var i=+this.dataset.tm,x=TERMS.splice(i,1)[0];
+    termRender();navRender();toast('已删除「'+x[1]+' → '+x[0]+'」',{u:0})}});
+}
+
+/* ══ 事件 ══ */
+$('items').addEventListener('click',function(e){var b=e.target.closest('.item');
+  if(b){S.mid=b.dataset.id;S.t=0;S.edit=null;S.q='';S.state='load';S.docId=null;S.docEdit=false;S.staleSeg=0;
+    $('sq').value='';renderAll();closeOver();
+    setTimeout(function(){S.state='pop';txRender()},650);return}
+  if(e.target.id==='clrQ'){$('q').value='';navRender()}});
+$('vP').onclick=function(){S.view='p';$('vP').setAttribute('aria-selected','true');$('vR').setAttribute('aria-selected','false');txRender()};
+$('vR').onclick=function(){S.view='r';$('vR').setAttribute('aria-selected','true');$('vP').setAttribute('aria-selected','false');txRender()};
+$('fU').onclick=function(){S.unfixed=!S.unfixed;this.setAttribute('aria-pressed',S.unfixed);txRender()};
+$('fB').onclick=function(){S.bulk=!S.bulk;this.setAttribute('aria-pressed',S.bulk);S.pick={};txRender()};
+$('den').onclick=function(){S.dense=!S.dense;this.setAttribute('aria-pressed',S.dense);
+  $('tx').classList.toggle('dense',S.dense);syncSticky()};
+$('sq').addEventListener('input',function(){S.q=this.value.trim();S.hit=-1;txRender()});
+$('sq').addEventListener('keydown',function(e){if(e.key==='Enter'){var a=vis();if(!a.length)return;
+  S.hit=(S.hit+1)%a.length;var el=$('ln-'+a[S.hit].id);if(el){el.scrollIntoView({block:'center',behavior:'smooth'});seek(a[S.hit].t)}}});
+$('q').addEventListener('input',navRender);
+$('fS').onchange=function(){S.spk=this.value;txRender()};
+$('tU').onclick=function(){S.tab='u';sideRender()};$('tD').onclick=function(){S.tab='c';sideRender()};
+$('tH').onclick=function(){S.tab='h';sideRender()};
+$('pipeBtn').onclick=function(){startJob()};
+$('tx').addEventListener('click',function(e){var t=e.target;
+  var tk=t.closest('[data-tk]');if(tk){seek(+tk.dataset.tk);play(1);return}
+  var pd=t.closest('[data-p]');if(pd){seek(+pd.dataset.p);play(1);return}
+  var ed=t.closest('[data-ed]');if(ed){S.edit=+ed.dataset.ed;txRender();
+    var ta=$('ta');if(ta){ta.focus();ta.setSelectionRange(ta.value.length,ta.value.length)}return}
+  var sv=t.closest('[data-sv]');if(sv){var v=segById(+sv.dataset.sv),val=$('ta').value.trim();
+    if(!val){toast('内容不能为空，否则这段就没有文本了',{e:1,u:0});return}
+    var old=v.x;v.x=val;v.b='human';if(!v.o)v.o=val;S.edit=null;S.staleSeg++;
+    txRender();flowRender();navRender();headRender();toast('已保存：原文仍在「原始稿」里');return}
+  var cx=t.closest('[data-cx]');if(cx){S.edit=null;txRender();return}
+  var rn=t.closest('[data-rn]');if(rn){var id=+rn.dataset.rn,ip=document.createElement('input');
+    ip.className='nm';ip.value=spk(id).n;ip.setAttribute('aria-label','说话人名字');
+    rn.replaceWith(ip);ip.focus();ip.select();
+    var done=function(){spk(id).n=ip.value.trim()||spk(id).n;spk(id).i=spk(id).n.slice(0,1);
+      txRender();spkSel();toast('说话人改名，'+SG().filter(function(v){return v.s===id}).length+' 段同时更新',{u:0})};
+    ip.onblur=done;ip.onkeydown=function(ev){if(ev.key==='Enter'){ev.preventDefault();done()}if(ev.key==='Escape')txRender()};return}
+  var pk=t.closest('[data-pk]');if(pk){S.pick[pk.dataset.pk]=pk.checked;bulkBar()}});
+function bulkBar(){var k=Object.keys(S.pick).filter(function(x){return S.pick[x]}).length;
+  $('banner').innerHTML=S.bulk?'<div class="banner"><span class="num" style="color:var(--fg)">'+k+'</span> 段已选'+
+    '<select id="bTo" aria-label="改派给" style="margin-left:6px">'+spkOpts()+'</select>'+
+    '<button class="act sm" id="bGo">改派</button><button class="act txt sm" id="bSp">拆为新说话人</button></div>':'';
+  if($('bGo'))$('bGo').onclick=function(){var to=+$('bTo').value,n=0;
+    Object.keys(S.pick).forEach(function(x){if(!S.pick[x])return;var v=segById(+x);if(v){v.s=to;n++}});
+    S.pick={};txRender();bulkBar();spkSel();toast('已把 '+n+' 段改派给「'+spk(to).n+'」')};
+  if($('bSp'))$('bSp').onclick=function(){var n=Object.keys(S.pick).filter(function(x){return S.pick[x]}).length;
+    toast(n+' 段将拆成新说话人（原型模拟，会写编辑历史）',{u:0})}}
+function spkOpts(){var u={};SG().forEach(function(v){u[v.s]=1});
+  return Object.keys(u).sort().map(function(i){return '<option value="'+i+'">'+esc(spk(+i).n)+'</option>'}).join('')}
+function spkSel(){var u={};SG().forEach(function(v){u[v.s]=1});
+  var ids=Object.keys(u).sort();
+  $('fS').innerHTML='<option value="">全部说话人</option>'+ids.map(function(i){
+    return '<option value="'+i+'"'+(S.spk===i?' selected':'')+'>'+esc(spk(+i).n)+' · '+
+      SG().filter(function(v){return String(v.s)===i}).length+' 段</option>'}).join('')}
+document.addEventListener('keydown',function(e){
+  if(e.key==='Escape'){closeOver();if(S.edit!==null){S.edit=null;txRender()}return}
+  var tg=(e.target.tagName||'').toLowerCase(),ty=tg==='input'||tg==='textarea'||tg==='select';
+  if((e.metaKey||e.ctrlKey)&&e.key==='Enter'){e.preventDefault();
+    if(S.edit!==null){var b=document.querySelector('[data-sv="'+S.edit+'"]');if(b)b.click()}else startJob();return}
+  if(ty)return;
+  if(e.key===' '){e.preventDefault();play();return}
+  if(e.key==='/'){e.preventDefault();$('sq').focus();return}
+  if(e.key==='?'){e.preventDefault();sheet('helpSheet');return}
+  if(e.key==='j'||e.key==='k'){var a=vis(),c=cur();if(!a.length)return;
+    var i=c?a.findIndex(function(x){return x.id===c.id}):-1;
+    i=Math.max(0,Math.min(a.length-1,i+(e.key==='j'?1:-1)));
+    seek(a[i].t);play(1);var el=$('ln-'+a[i].id);if(el)el.scrollIntoView({block:'center',behavior:'smooth'});
+    e.preventDefault();return}
+  if(e.key==='e'){var c2=cur();if(c2){S.edit=c2.id;txRender();var ta=$('ta');if(ta)ta.focus()}e.preventDefault()}});
+$('upBtn').onclick=function(){$('upBox').hidden=false;var p=0;clearInterval($('upBar')._t);
+  $('upBar')._t=setInterval(function(){p+=8;$('upBar').style.width=Math.min(p,100)+'%';
+    $('upPct').textContent=Math.min(p,100)+'%';
+    if(p>=100){clearInterval($('upBar')._t);$('upBox').hidden=true;$('upBar').style.width='0';
+      MEETS.unshift({id:'m'+Date.now(),ti:'新上传 · 客户沟通',f:'call-'+(200+MEETS.length)+'.m4a',d:268,sn:0,sp:0,w:'刚刚',
+        st:{a:'run',p:'none',u:'none',c:'none'},status:'processing'});
+      S.mid=MEETS[0].id;S.t=0;S.state='load';S.docId=null;renderAll();toast('上传完成，正在转写（2 分 48 秒录音，本机 GPU）',{u:0})}},90)};
+['mN','mT','mS'].forEach(function(id){$(id).onclick=function(){
+  ['mN','mT','mS'].forEach(function(x){$(x).setAttribute('aria-current',x===id?'page':'false')});
+  if(id==='mN'){$('nav').classList.add('open');$('scrim').classList.add('on')}
+  else if(id==='mT'){closeOver();$('tools').scrollIntoView({block:'start',behavior:'smooth'})}
+  else{S.tab='c';sideRender();openSide()}}});
+
+/* ══ 原型演示条 + 设计说明 ══ */
+(function(){
+  var d=document.createElement('div');d.setAttribute('data-od-id','demo-bar');
+  d.style.cssText='display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:var(--s3);padding-top:var(--s3);border-top:1px solid var(--hair)';
+  d.innerHTML='<span style="font-size:var(--cap);letter-spacing:.06em;color:var(--muted)">演示</span>'+
+    ['pop|已填充','load|加载','error|错误','empty|空','long|302 段'].map(function(x){var p=x.split('|');
+      return '<button class="act txt sm" data-st="'+p[0]+'">'+p[1]+'</button>'}).join('')+
+    '<button class="act txt sm" id="whyBtn">设计依据</button>';
+  $('demoSlot').appendChild(d);
+  d.addEventListener('click',function(e){var b=e.target.closest('[data-st]');
+    if(b){var v=b.dataset.st;
+      if(v==='long'){S.mid='m3';S.docId=null;S.q='';S.spk='';S.unfixed=false;S.dense=true;$('sq').value='';
+        $('tx').classList.add('dense');$('den').setAttribute('aria-pressed','true');renderAll();
+        toast('302 段：紧凑模式 + 过滤 + 发言块，一屏约 18 段',{u:0});return}
+      if(v==='empty'){S.q='绝对不存在的词';$('sq').value=S.q;S.state='pop'}
+      else{if(v==='pop'){S.q='';$('sq').value=''}S.state=v==='pop'?'pop':v}
+      txRender();return}
+    if(e.target.id==='whyBtn')sheet('whySheet')});
+  $('whBody').innerHTML=[
+    ['为什么不是上一版','上一版层级平（没有唯一主角）、盒与胶囊过多、三层暗色几乎同色只靠发丝线，所以发闷。这版把主角交给会议标题与转写正文，盒子中掉到只剩输入控件。'],
+    ['逻辑学','流程写成状态机（转写→校对→理解→材料），每步显示还差什么；页面主角是当前会议，产品名退回顶栏。'],
+    ['人性工程','连续同人片段合成发言块；空格/J/K/E/⌘↵ 全程不离键盘；只看未校对、场内搜索、批量改派、紧凑模式；改完自动弹“材料已过期”并一键重出。'],
+    ['美术学','字阶 12/13/16/20/26 五级 + 等宽时码；accent 只出现在主操作与当前选中项；说话人色只染小圆点与名字，不铺整行；正文限宽 88ch。'],
+    ['社会学','材料用米黄纸感的标栏 + 宋体排版，像能直接递给领导的文件；待办是“事项/负责人/期限/依据”表；不确定的事留在“待确认”，不被 AI 抹平。']
+  ].map(function(r){return '<div style="margin-bottom:var(--s4)"><div style="font-size:var(--cap);letter-spacing:.06em;color:var(--muted);margin-bottom:4px">'+
+    r[0]+'</div><p style="font-size:var(--small);color:var(--fg-2);line-height:1.65">'+r[1]+'</p></div>'}).join('')+
+    '<p style="font-size:var(--cap);color:var(--muted)">音频用模拟时钟代替；字段与线上 /api 一一对应，落地不改后端。</p>';
+})();
+
+function renderAll(){navRender();headRender();spkSel();txRender();flowRender();sideRender();if(S.bulk)bulkBar();tick()}
+renderAll();
+</script>
+</body>
+</html>
