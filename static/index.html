@@ -682,6 +682,7 @@ function renderInbox(){
 /* ---------- 打开 / 关闭会议 ---------- */
 async function openTask(tid){
   state.tid=tid; state.selected.clear(); state.editing=null; state.nowIdx=-1;
+  try{ localStorage.setItem("asr-last-task",tid); }catch(e){}
   updateBulk();
   await reloadTask();
   if(state.task.audio_path) $("player").src=`/api/tasks/${tid}/audio`;
@@ -1383,6 +1384,11 @@ function openDrawer(pane){
   document.body.setAttribute("data-panel-open","1");
   $("drawerTitle").textContent={inbox:"收件箱",understand:"会议理解",doc:"材料",term:"术语与替换",spk:"说话人",job:"任务"}[state.pane];
   if(state.pane==="term") renderTerms();
+  if(state.pane==="understand" && !state.understanding){
+    api(`/api/tasks/${state.tid}/documents?kind=understanding`).then(docs=>{
+      if(docs.length){ state.understanding=JSON.parse(docs[0].content); renderUnderstanding(state.understanding); }
+    }).catch(()=>{});
+  }
   if(state.pane==="job") loadJobList();
   if(state.pane==="spk") renderSpeakers();
 }
@@ -1436,9 +1442,11 @@ function jumpUnfixed(){
 /* ---------- 启动 ---------- */
 try{ setTheme(localStorage.getItem("asr-theme")||"light"); }catch(e){ setTheme("light"); }
 pollHealth(); setInterval(pollHealth, 5000);
-loadTasks(); renderScript();
+renderHero(); loadTasks(); renderScript();
 const URL_TASK=new URLSearchParams(location.search).get("task");
 if(URL_TASK) openTask(URL_TASK);
+else { let last=null; try{ last=localStorage.getItem("asr-last-task"); }catch(e){}
+  if(last) openTask(last); }
 </script>
 </body>
 </html>
