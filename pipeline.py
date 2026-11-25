@@ -48,6 +48,8 @@ def load_asr_model() -> str | None:
 
 
 def asr_ready() -> bool:
+    if config.ASR_PROVIDER == "omlx":
+        return True          # oMLX 后端不依赖本机模型, 就绪与否在请求时见真章
     return _MODEL is not None
 
 
@@ -55,8 +57,86 @@ def asr_error() -> str | None:
     return _MODEL_ERROR
 
 
+def _omlx_post(url: str, data: dict, files: dict, timeout: int):
+    """可注入的 HTTP 出口(测试用桩替换)。返回 httpx.Response 形状的对象。"""
+    import httpx
+    return httpx.post(url, data=data, files=files, headers=_omlx_headers(), timeout=timeout)
+
+
+def _omlx_headers() -> dict:
+    h: dict = {}
+    if config.OMLX_API_KEY:
+        h["Authorization"] = "Bearer " + config.OMLX_API_KEY
+    return h
+
+
+def _group_words(words: list[dict], gap_ms: int = 1200, max_chars: int = 30) -> list[dict]:
+    """词级时间戳 → 伪片段: 静音间隙(>gap_ms)或累计长度(>max_chars)处切开。"""
+    out: list[dict] = []
+    cur: list[dict] = []
+    n = 0
+    for w in words:
+        if cur and w["start"] - cur[-1]["end"] > gap_ms / 1000:
+            out.append(cur); cur, n = [], 0
+        cur.append(w); n += len(w.get("text") or w.get("word") or "")
+        if n >= max_chars:
+            out.append(cur); cur, n = [], 0
+    if cur:
+        out.append(cur)
+    return [{"start": min(w["start"] for w in g), "end": max(w["end"] for w in g),
+             "text": "".join(w.get("text") or w.get("word") or "" for w in g).strip()}
+            for g in out]
+
+
+def transcribe_wav_omlx(wav_path: str, hotword: str = "", _post=None) -> list[dict]:
+    """oMLX 后端: POST /v1/audio/transcriptions, 映射为内部片段形状。
+
+    响应: {text, language, duration, segments:[{start,end,text}]} (秒)。
+    无说话人标签(oMLX 当前 STT 后端不支持 diarized) → speaker_id=None。
+    prompt 字段承接热词: Qwen3-ASR 作强偏置, Whisper 作 initial_prompt。
+    """
+    import os as _os
+    url = config.OMLX_BASE_URL.rstrip("/") + "/v1/audio/transcriptions"
+    data = {"model": config.OMLX_ASR_MODEL, "response_format": "json",
+            "word_timestamps": "true"}
+    if hotword:
+        data["prompt"] = hotword
+    with open(wav_path, "rb") as f:
+        files = {"file": (_os.path.basename(wav_path), f, "audio/wav")}
+        post = _post or _omlx_post
+        r = post(url, data, files, config.OMLX_STT_TIMEOUT)
+    if r.status_code != 200:
+        detail = ""
+        try:
+            detail = r.json().get("detail") or r.json().get("error", {}).get("message") or ""
+        except Exception:  # noqa: BLE001
+            pass
+        raise RuntimeError(f"oMLX 转写失败: HTTP {r.status_code} {detail}".rstrip())
+    d = r.json()
+    raw = d.get("segments") or []
+    if raw and isinstance(raw[0], dict) and raw[0].get("words"):
+        raw = _group_words([w for s in raw for w in (s.get("words") or [])])
+    out = []
+    for i, seg in enumerate(raw):
+        st, en, txt = seg.get("start"), seg.get("end"), seg.get("text") or ""
+        if not txt.strip():
+            continue
+        out.append({"idx": len(out),
+                    "start_ms": int(st * 1000) if st is not None else None,
+                    "end_ms": int(en * 1000) if en is not None else None,
+                    "speaker_id": None, "raw_text": txt.strip()})
+    if not out:
+        text = (d.get("text") or "").strip()
+        if text:  # 兜底: 整段一条, 时间戳未知(与 funasr 兜底一致)
+            out = [{"idx": 0, "start_ms": None, "end_ms": None,
+                    "speaker_id": None, "raw_text": text}]
+    return out
+
+
 def transcribe_wav(wav_path: str, hotword: str = "") -> list[dict]:
     """运行 ASR, 返回规范化片段列表。引擎无关的统一出口。"""
+    if config.ASR_PROVIDER == "omlx":
+        return transcribe_wav_omlx(wav_path, hotword)
     if _MODEL is None:
         raise RuntimeError(asr_error() or "ASR 模型未加载")
     res = _MODEL.generate(input=wav_path, batch_size_s=300, hotword=hotword or "")

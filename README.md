@@ -81,6 +81,31 @@ ufw allow 8466/tcp
 
 首次打开会跳转 `/login`，输入令牌（`cat data/.auth-token` 或 `ASR_WEB_TOKEN`）即可，cookie 30 天有效。
 
+## Mac 部署（oMLX 后端，免装 FunASR）
+
+在 Apple Silicon Mac 上用 oMLX 同时供 ASR 与 LLM，不需要 FunASR/torch：
+
+1. oMLX 里确保有 STT 模型（如 `mlx-community/whisper-large-v3-turbo` 或
+   `mlx-community/Qwen3-ASR-1.7B-8bit`）与一个对话模型（建议 27B 级别，别和
+   100GB 级大模型同时挂，内存互挤）。
+2. 参考 `asr.env.mac.example` 写 `asr.env`：`ASR_PROVIDER=omlx`、
+   `OMLX_BASE_URL=http://127.0.0.1:18000`、`OMLX_API_KEY=…`、
+   `LLM_BASE_URL=http://127.0.0.1:18000/v1`、`LLM_MODEL=…`。
+3. 安装与启动（CPU/MPS 皆可，本方案不需要 torch）：
+
+```bash
+python3 -m venv .venv-mac && . .venv-mac/bin/activate
+pip install -r requirements.txt      # httpx 已加入, oMLX 后端用
+set -a; source asr.env; set +a
+python -m uvicorn app:app --host 127.0.0.1 --port 8466
+```
+
+说明：`ASR_PROVIDER=omlx` 时走 oMLX 的 `/v1/audio/transcriptions`（multipart
+`file`+`model`+`prompt`），`prompt` 承接热词/术语表；返回片段映射为内部
+segments，说话人统一为"未知"（oMLX 当前 STT 后端不带 diarization，需要
+说话人请用 FunASR 后端，或在界面里手工改派）。`localhost` 是安全上下文，
+网页录音按钮在 Mac 上可直接使用。
+
 ## API
 
 | 端点 | 说明 |
