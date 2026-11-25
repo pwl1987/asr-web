@@ -122,13 +122,24 @@ async def auth_middleware(request: Request, call_next):
     auth = request.headers.get("authorization") or ""
     if auth.lower().startswith("bearer "):
         token = auth[7:].strip()
-    if not token:
-        token = request.query_params.get("token", "")
+    qtoken = request.query_params.get("token", "")
+    # ?token= 显式提供且有效 → 优先采信并落 cookie, 覆盖陈旧 cookie
+    # (多实例同 host 不同端口共享 cookie, 陈旧 cookie 会遮蔽有效 query token)
+    if qtoken and hmac.compare_digest(qtoken, AUTH_TOKEN):
+        token = qtoken
     if not hmac.compare_digest(token, AUTH_TOKEN):
         if path.startswith("/api/"):
             return JSONResponse({"detail": "未授权"}, status_code=401)
-        return RedirectResponse("/login", status_code=302)
-    return await call_next(request)
+        resp = RedirectResponse("/login", status_code=302)
+        if qtoken:
+            resp.set_cookie(COOKIE, qtoken, max_age=30 * 24 * 3600,
+                            httponly=True, samesite="lax")
+        return resp
+    resp = await call_next(request)
+    if qtoken and not request.cookies.get(COOKIE):
+        resp.set_cookie(COOKIE, qtoken, max_age=30 * 24 * 3600,
+                        httponly=True, samesite="lax")
+    return resp
 
 
 @app.get("/login")

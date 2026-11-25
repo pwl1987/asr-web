@@ -50,6 +50,7 @@ def client():
     ]
     pipeline._real_decode_audio = pipeline.decode_audio  # 保留真实实现供单元测试
     pipeline.decode_audio = lambda inp, out: (make_wav(Path(out), 1.0) or 1.0)
+    pipeline._real_transcribe_wav = pipeline.transcribe_wav  # 保留真实实现供单元测试
     pipeline.transcribe_wav = lambda wav, hotword="": list(pytest.segments_stub)
     pipeline.asr_ready = lambda: True
     pipeline.asr_error = lambda: None

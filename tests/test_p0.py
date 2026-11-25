@@ -45,8 +45,20 @@ def test_access_log_token_redacted(client):
 
 
 def test_page_redirects_to_login(client):
+    client.cookies.clear()   # 模拟新浏览器
     r = client.get("/", follow_redirects=False)
     assert r.status_code == 302 and "/login" in r.headers["location"]
+
+
+def test_query_token_wins_over_stale_cookie(client):
+    """?token= 有效时应覆盖陈旧 cookie(多实例同 host 不同端口会共享 cookie)。"""
+    from app import COOKIE
+    client.cookies.clear()
+    client.cookies.set(COOKIE, "stale-token", domain="127.0.0.1")
+    r = client.get(f"/?token={TOKEN}", follow_redirects=False)
+    assert r.status_code == 200
+    # 之后不带 query 也能访问(cookie 已被 ?token= 修正)
+    assert client.get("/api/health").status_code == 200
 
 
 def test_login_flow(client):

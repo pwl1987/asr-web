@@ -18,6 +18,13 @@ TOKEN_FILE = DATA_DIR / ".auth-token"
 
 MODEL_DIR = Path(os.environ.get("ASR_MODEL_DIR", "/data/models/funasr"))
 
+# ASR 后端: funasr(本机 FunASR, 需模型目录) | omlx(oMLX /v1/audio/transcriptions, Mac/无卡机)
+ASR_PROVIDER = os.environ.get("ASR_PROVIDER", "funasr")
+OMLX_BASE_URL = os.environ.get("OMLX_BASE_URL", "http://127.0.0.1:18000")
+OMLX_API_KEY = os.environ.get("OMLX_API_KEY", "")
+OMLX_ASR_MODEL = os.environ.get("OMLX_ASR_MODEL", "mlx-community__whisper-large-v3-turbo")
+OMLX_STT_TIMEOUT = _int("ASR_OMLX_TIMEOUT", 1800)          # 秒, 长音频
+
 LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "http://127.0.0.1:8350/v1")
 LLM_API_KEY = os.environ.get("LLM_API_KEY", "")
 LLM_MODEL = os.environ.get("LLM_MODEL", "")
