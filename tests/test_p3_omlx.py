@@ -59,7 +59,7 @@ def test_omlx_empty_segments_falls_back_to_text(monkeypatch, tmp_path):
                                                 "segments": []}, {}))
     assert len(segs) == 1
     assert segs[0]["raw_text"] == "只有整段"
-    assert segs[0]["start_ms"] is None
+    assert segs[0]["start_ms"] == 0   # 挂在块起点
 
 
 def test_omlx_words_grouping():
@@ -85,3 +85,48 @@ def test_omlx_http_error(monkeypatch, tmp_path):
     monkeypatch.setattr(pipeline.config, "ASR_PROVIDER", "omlx")
     with pytest.raises(RuntimeError, match="401"):
         transcribe_wav_omlx(mkwav(tmp_path), "", _post=post)
+
+
+def test_plan_chunks_small_no_split(tmp_path):
+    w = tmp_path / "s.wav"; w.write_bytes(b"RIFF")
+    assert pipeline._omlx_plan_chunks(str(w), duration=60, _size=lambda p: 1000) == [(None, None)]
+
+
+def test_plan_chunks_cuts_at_silence(tmp_path):
+    w = tmp_path / "b.wav"; w.write_bytes(b"RIFF")
+    plan = pipeline._omlx_plan_chunks(str(w), duration=1800,
+                                      silence=[(598.0, 601.0), (1205.0, 1206.5)],
+                                      _size=lambda p: 200_000_000)
+    assert len(plan) == 3
+    assert plan[0][0] == 0 and plan[-1][1] == 1800
+    assert plan[0][1] == 599.5            # 静音中点
+    assert all(b - a > 0.5 for a, b in plan)
+
+
+def test_plan_chunks_no_silence_even_cut(tmp_path):
+    w = tmp_path / "c.wav"; w.write_bytes(b"RIFF")
+    plan = pipeline._omlx_plan_chunks(str(w), duration=1200,
+                                      silence=[], _size=lambda p: 200_000_000)
+    assert len(plan) == 3
+    assert plan[1][0] == plan[0][1]       # 首尾相接
+
+
+def test_omlx_multichunk_merges_offsets(monkeypatch, tmp_path):
+    w = tmp_path / "m.wav"; w.write_bytes(b"RIFF")
+    monkeypatch.setattr(pipeline, "_omlx_plan_chunks",
+                        lambda *a, **k: [(0.0, 10.0), (10.0, 20.0)])
+    monkeypatch.setattr(pipeline, "_omlx_extract",
+                        lambda wav, a, b, out: open(out, "wb").write(b"RIFF"))
+    calls: list[float] = []
+
+    def fake_post(url, data, files, timeout):
+        calls.append(len(calls))
+        payload = {"text": "", "segments": [
+            {"start": 0.0, "end": 2.0, "text": "前半" if len(calls) == 1 else "后半"}]}
+        return FakeResp(200, payload)
+
+    monkeypatch.setattr(pipeline.config, "ASR_PROVIDER", "omlx")
+    segs = transcribe_wav_omlx(str(w), "", _post=fake_post)
+    assert [(s["start_ms"], s["end_ms"]) for s in segs] == [(0, 2000), (10000, 12000)]
+    assert [s["raw_text"] for s in segs] == ["前半", "后半"]
+    assert [s["idx"] for s in segs] == [0, 1]

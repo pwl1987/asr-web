@@ -88,6 +88,76 @@ def _group_words(words: list[dict], gap_ms: int = 1200, max_chars: int = 30) -> 
             for g in out]
 
 
+def _omlx_silences(wav_path: str) -> list[tuple[float, float]]:
+    """ffmpeg silencedetect 扫静音区间, 供分块找句间切点。失败返回空表。"""
+    import subprocess
+    try:
+        r = subprocess.run(
+            [ffmpeg_exe(), "-hide_banner", "-nostats", "-i", wav_path,
+             "-af", "silencedetect=noise=-32dB:d=0.4", "-f", "null", "-"],
+            capture_output=True, text=True, timeout=600)
+    except Exception:  # noqa: BLE001
+        return []
+    out: list[tuple[float, float]] = []
+    start = None
+    for line in (r.stderr or "").splitlines():
+        line = line.strip()
+        if "silence_start:" in line:
+            try:
+                start = float(line.rsplit(":", 1)[1].strip().split()[0])
+            except ValueError:
+                start = None
+        elif "silence_end:" in line and start is not None:
+            try:
+                end = float(line.rsplit(":", 1)[1].strip().split()[0])
+                if end > start:
+                    out.append((start, end))
+            except ValueError:
+                pass
+            start = None
+    return out
+
+
+def _omlx_plan_chunks(wav_path: str, duration: float | None = None,
+                      max_bytes: int = 90_000_000, chunk_sec: int = 600,
+                      silence: list[tuple[float, float]] | None = None,
+                      _size=None) -> list[tuple[float | None, float | None]]:
+    """返回 [(start,end)...] 切块计划(秒); None 表示不切块。
+
+    超过 oMLX 单次上传上限(max_bytes)才切; 切点优先取边界附近(±30s)的静音
+    中点(句间), 没有静音就按均匀间隔硬切。
+    """
+    import math
+    size = (_size or (lambda p: __import__("os").path.getsize(p)))(wav_path)
+    if size <= max_bytes:
+        return [(None, None)]
+    if not duration:
+        duration = _wav_duration(wav_path)
+    if not duration or duration <= 0:
+        return [(None, None)]
+    n = max(2, math.ceil(size / max_bytes))
+    target = min(duration / n, float(chunk_sec))
+    cuts: list[float] = []
+    t = target
+    sil = silence if silence is not None else _omlx_silences(wav_path)
+    while t < duration - 5:
+        win = [(a + b) / 2 for a, b in sil if t - 30 <= (a + b) / 2 <= t + 30]
+        cuts.append(min(win, key=lambda x: abs(x - t)) if win else t)
+        t += target
+    points = [0.0] + cuts + [duration]
+    return [(points[i], points[i + 1]) for i in range(len(points) - 1)
+            if points[i + 1] - points[i] > 0.5]
+
+
+def _omlx_extract(wav_path: str, start: float, end: float, out_path: str) -> None:
+    import subprocess
+    subprocess.run(
+        [ffmpeg_exe(), "-y", "-hide_banner", "-loglevel", "error",
+         "-i", wav_path, "-ss", f"{start:.3f}", "-to", f"{end:.3f}",
+         "-c", "copy", out_path],
+        check=True, capture_output=True, timeout=600)
+
+
 def transcribe_wav_omlx(wav_path: str, hotword: str = "", _post=None) -> list[dict]:
     """oMLX 后端: POST /v1/audio/transcriptions, 映射为内部片段形状。
 
@@ -101,35 +171,56 @@ def transcribe_wav_omlx(wav_path: str, hotword: str = "", _post=None) -> list[di
             "word_timestamps": "true"}
     if hotword:
         data["prompt"] = hotword
-    with open(wav_path, "rb") as f:
-        files = {"file": (_os.path.basename(wav_path), f, "audio/wav")}
-        post = _post or _omlx_post
-        r = post(url, data, files, config.OMLX_STT_TIMEOUT)
-    if r.status_code != 200:
-        detail = ""
-        try:
-            detail = r.json().get("detail") or r.json().get("error", {}).get("message") or ""
-        except Exception:  # noqa: BLE001
-            pass
-        raise RuntimeError(f"oMLX 转写失败: HTTP {r.status_code} {detail}".rstrip())
-    d = r.json()
-    raw = d.get("segments") or []
-    if raw and isinstance(raw[0], dict) and raw[0].get("words"):
-        raw = _group_words([w for s in raw for w in (s.get("words") or [])])
-    out = []
-    for i, seg in enumerate(raw):
-        st, en, txt = seg.get("start"), seg.get("end"), seg.get("text") or ""
-        if not txt.strip():
-            continue
-        out.append({"idx": len(out),
-                    "start_ms": int(st * 1000) if st is not None else None,
-                    "end_ms": int(en * 1000) if en is not None else None,
-                    "speaker_id": None, "raw_text": txt.strip()})
-    if not out:
-        text = (d.get("text") or "").strip()
-        if text:  # 兜底: 整段一条, 时间戳未知(与 funasr 兜底一致)
-            out = [{"idx": 0, "start_ms": None, "end_ms": None,
-                    "speaker_id": None, "raw_text": text}]
+    post = _post or _omlx_post
+
+    def _one(path: str) -> dict:
+        with open(path, "rb") as f:
+            files = {"file": (_os.path.basename(path), f, "audio/wav")}
+            r = post(url, data, files, config.OMLX_STT_TIMEOUT)
+        if r.status_code != 200:
+            detail = ""
+            try:
+                payload = r.json()
+                detail = payload.get("detail") or (payload.get("error") or {}).get("message") or ""
+            except Exception:  # noqa: BLE001
+                pass
+            raise RuntimeError(f"oMLX 转写失败: HTTP {r.status_code} {detail}".rstrip())
+        return r.json()
+
+    plan = _omlx_plan_chunks(wav_path)
+    chunks = plan if plan != [(None, None)] else [(None, None)]
+    docs: list[dict] = []
+    offsets: list[float] = []
+    if len(chunks) == 1:
+        docs.append(_one(wav_path)); offsets.append(0.0)
+    else:
+        import tempfile
+        for k, (a, b) in enumerate(chunks):
+            tmp = tempfile.NamedTemporaryFile(suffix=f"-c{k}.wav", delete=False)
+            tmp.close()
+            try:
+                _omlx_extract(wav_path, a or 0.0, b or 1e18, tmp.name)
+                docs.append(_one(tmp.name)); offsets.append(a or 0.0)
+            finally:
+                _os.unlink(tmp.name)
+    out: list[dict] = []
+    for d, off in zip(docs, offsets):
+        raw = d.get("segments") or []
+        if raw and isinstance(raw[0], dict) and raw[0].get("words"):
+            raw = _group_words([w for s in raw for w in (s.get("words") or [])])
+        for seg in raw:
+            st, en, txt = seg.get("start"), seg.get("end"), seg.get("text") or ""
+            if not txt.strip():
+                continue
+            out.append({"idx": len(out),
+                        "start_ms": int((st + off) * 1000) if st is not None else None,
+                        "end_ms": int((en + off) * 1000) if en is not None else None,
+                        "speaker_id": None, "raw_text": txt.strip()})
+        if not raw:
+            text = (d.get("text") or "").strip()
+            if text:  # 兜底: 该块只有整段文本 → 挂在块起点, 时长未知
+                out.append({"idx": len(out), "start_ms": int(off * 1000),
+                            "end_ms": None, "speaker_id": None, "raw_text": text})
     return out
 
 
